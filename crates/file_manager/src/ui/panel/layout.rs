@@ -11,24 +11,28 @@ use super::FileManagerPanel;
 use crate::ui::ox_theme::metrics;
 
 /// Narrowest the sidebar may be dragged to.
-const MIN_SIDEBAR_WIDTH: f32 = 120.;
+pub(super) const MIN_SIDEBAR_WIDTH: f32 = 120.;
+/// Widest the sidebar may be dragged to.
+pub(super) const MAX_SIDEBAR_WIDTH: f32 = 720.;
 /// Room the folder view always keeps, so dragging never hides it.
 const MIN_CONTENT_WIDTH: f32 = 200.;
 /// Smallest share of the sidebar the places list may take.
-const MIN_SIDEBAR_SPLIT: f32 = 0.12;
+pub(super) const MIN_SIDEBAR_SPLIT: f32 = 0.12;
 /// Largest share of the sidebar the places list may take.
-const MAX_SIDEBAR_SPLIT: f32 = 0.88;
+pub(super) const MAX_SIDEBAR_SPLIT: f32 = 0.88;
 
 impl FileManagerPanel {
     /// Shows or hides the details pane.
     pub(crate) fn toggle_details_pane(&mut self, cx: &mut Context<Self>) {
         self.details_pane_visible = !self.details_pane_visible;
+        self.persist_state(cx);
         cx.notify();
     }
 
     /// Shows or hides the sidebar.
     pub(crate) fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
         self.sidebar_visible = !self.sidebar_visible;
+        self.persist_state(cx);
         cx.notify();
     }
 
@@ -38,11 +42,12 @@ impl FileManagerPanel {
     /// visible cap comes from [`Self::effective_sidebar_width`], which keeps a
     /// minimum amount of room for the folder view.
     pub(crate) fn set_sidebar_width(&mut self, width: f32, cx: &mut Context<Self>) {
-        let width = width.clamp(120., 720.);
+        let width = width.clamp(MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH);
         if (self.sidebar_width - width).abs() < 0.5 {
             return;
         }
         self.sidebar_width = width;
+        self.persist_state(cx);
         cx.notify();
     }
 
@@ -51,6 +56,7 @@ impl FileManagerPanel {
     /// to be cleaned up here.
     pub(crate) fn reset_sidebar_width(&mut self, cx: &mut Context<Self>) {
         self.sidebar_width = metrics::SIDEBAR_WIDTH;
+        self.persist_state(cx);
         cx.notify();
     }
 
@@ -64,12 +70,14 @@ impl FileManagerPanel {
             return;
         }
         self.sidebar_split = ratio;
+        self.persist_state(cx);
         cx.notify();
     }
 
     /// Restores the even split between places and the folder tree.
     pub(crate) fn reset_sidebar_split(&mut self, cx: &mut Context<Self>) {
         self.sidebar_split = 0.5;
+        self.persist_state(cx);
         cx.notify();
     }
 

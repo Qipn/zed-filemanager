@@ -11,6 +11,7 @@ use crate::model::entries::SortMode;
 impl FileManagerPanel {
     pub(crate) fn toggle_hidden(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.show_hidden = !self.show_hidden;
+        self.persist_state(cx);
         self.reload_view(window, cx);
         cx.notify();
     }
@@ -22,6 +23,7 @@ impl FileManagerPanel {
         } else {
             SortMode::NameAscending
         };
+        self.persist_state(cx);
         self.reload_view(window, cx);
         cx.notify();
     }
@@ -33,6 +35,7 @@ impl FileManagerPanel {
         } else {
             SortMode::ModifiedAscending
         };
+        self.persist_state(cx);
         self.reload_view(window, cx);
         cx.notify();
     }
@@ -44,6 +47,7 @@ impl FileManagerPanel {
         } else {
             SortMode::SizeAscending
         };
+        self.persist_state(cx);
         self.reload_view(window, cx);
         cx.notify();
     }

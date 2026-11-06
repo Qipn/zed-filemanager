@@ -19,9 +19,11 @@
 //!   - [`model::bookmarks`]: the folders pinned to the sidebar.
 //! - [`ui`]: the `gpui` layer.
 //!   - [`ui::panel`]: the `FileManagerPanel` entity and its `Panel` impl.
+//!   - [`ui::panel::persistence`]: the panel state kept between sessions.
 //!   - [`ui::panel::bookmarks`]: pinning and unpinning sidebar folders.
 //!   - [`ui::render`]: the window layout (GNOME Files header bar, body, status bar).
 //!   - [`ui::views`]: the details view and the icon grid.
+//!   - [`ui::views::icons`]: file-type and folder icons from the icon theme.
 //!   - [`ui::sidebar`]: the places list and the folder tree.
 //!   - [`ui::details_pane`]: the details pane on the right.
 //!   - [`ui::places`]: the "Places" entries of the sidebar.

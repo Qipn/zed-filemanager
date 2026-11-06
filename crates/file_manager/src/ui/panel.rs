@@ -9,6 +9,7 @@ mod layout;
 mod location;
 mod menus;
 mod navigation;
+mod persistence;
 mod rename;
 mod search;
 mod selection;
@@ -41,7 +42,7 @@ use crate::model::clipboard::Clipboard;
 use crate::model::entries::{DirEntry, SortMode, read_entries};
 use crate::model::tree::TreeNode;
 use crate::model::undo::UndoManager;
-use crate::ui::ox_theme::metrics;
+use crate::ui::panel::persistence::PersistedState;
 use crate::ui::places::PlaceEntry;
 use crate::ui::render as render_panel;
 use crate::ui::search_field::{SearchField, SearchFieldEvent};
@@ -103,6 +104,10 @@ pub struct FileManagerPanel {
     /// search either.
     pub(crate) _search_task: Option<Task<()>>,
     pub(crate) _operation_task: Option<Task<()>>,
+    /// The pending write of the panel state
+    /// (`ui::panel::persistence`). Replaced on every change, so the write only
+    /// happens once a burst of changes has settled.
+    pub(crate) _persist_task: Option<Task<()>>,
     pub(crate) error: Option<SharedString>,
     pub(crate) clipboard: Option<Clipboard>,
     /// The entry being renamed inline, if any. The typed text lives in the
@@ -188,6 +193,11 @@ impl FileManagerPanel {
         let project = workspace.project().clone();
         let fs = project.read(cx).fs().clone();
         let workspace_handle = cx.weak_entity();
+        // The sidebar geometry and the view preferences are restored from the
+        // previous session (`ui::panel::persistence`), except for the directory:
+        // that always follows the project, so a panel opened in another project
+        // cannot start in a folder that is not part of it.
+        let state = PersistedState::load(cx);
         let (current_dir, using_fallback_dir) = match Self::initial_directory(project.read(cx), cx)
         {
             Some(directory) => (Some(directory), false),
@@ -213,19 +223,20 @@ impl FileManagerPanel {
             _tree_task: None,
             _search_task: None,
             _operation_task: None,
+            _persist_task: None,
             error: None,
             clipboard: None,
             rename_state: None,
             context_menu: None,
             undo_manager: UndoManager::new(),
-            show_hidden: false,
-            sort_mode: SortMode::default(),
+            show_hidden: state.show_hidden,
+            sort_mode: state.sort_mode,
             path_editing: false,
             drag_target: None,
             pending_transfer: None,
-            view_mode: ViewMode::Details,
-            sidebar_visible: true,
-            details_pane_visible: false,
+            view_mode: state.view_mode,
+            sidebar_visible: state.sidebar_visible,
+            details_pane_visible: state.details_pane_visible,
             search_query: None,
             search_field: cx.new(|cx| SearchField::new("file-manager-search-input", cx)),
             rename_field: cx.new(|cx| SearchField::new("file-manager-rename-input", cx)),
@@ -234,9 +245,9 @@ impl FileManagerPanel {
             search_running: false,
             search_generation: 0,
             expanded_dirs: std::collections::HashMap::new(),
-            icon_size: metrics::DEFAULT_ICON_SIZE,
-            sidebar_width: metrics::SIDEBAR_WIDTH,
-            sidebar_split: 0.5,
+            icon_size: state.icon_size,
+            sidebar_width: state.sidebar_width,
+            sidebar_split: state.sidebar_split,
             places: Vec::new(),
             bookmarks: Vec::new(),
             tree_root: None,

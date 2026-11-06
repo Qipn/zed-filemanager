@@ -15,6 +15,7 @@ impl FileManagerPanel {
     /// Sets the view mode.
     pub(crate) fn set_view_mode(&mut self, mode: ViewMode, cx: &mut Context<Self>) {
         self.view_mode = mode;
+        self.persist_state(cx);
         cx.notify();
     }
 
@@ -69,6 +70,7 @@ impl FileManagerPanel {
     pub(crate) fn increase_icon_size(&mut self, cx: &mut Context<Self>) {
         if self.icon_size + 1 < metrics::ICON_SIZES.len() {
             self.icon_size += 1;
+            self.persist_state(cx);
             cx.notify();
         }
     }
@@ -77,6 +79,7 @@ impl FileManagerPanel {
     pub(crate) fn decrease_icon_size(&mut self, cx: &mut Context<Self>) {
         if self.icon_size > 0 {
             self.icon_size -= 1;
+            self.persist_state(cx);
             cx.notify();
         }
     }

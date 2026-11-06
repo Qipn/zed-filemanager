@@ -28,7 +28,12 @@ impl DirEntry {
 
 /// How entries are ordered. Directories always group before files; the
 /// selected key and direction apply within each group.
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
+///
+/// This is persisted in the panel state
+/// (`crate::ui::panel::persistence`), so the variant names are part of the
+/// on-disk format.
+#[derive(Clone, Copy, Debug, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum SortMode {
     #[default]
     NameAscending,

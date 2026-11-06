@@ -26,7 +26,21 @@ use crate::ui::ox_theme::{metrics, palette};
 use crate::ui::panel::FileManagerPanel;
 
 /// How the contents of the current directory are shown.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+///
+/// This is persisted in the panel state
+/// (`crate::ui::panel::persistence`), so the variant names are part of the
+/// on-disk format.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum ViewMode {
     /// The table-like list with the OpenXplorer columns.
     #[default]

@@ -18,11 +18,14 @@ default = []
 [dependencies]
 anyhow.workspace = true
 chrono = { workspace = true, features = ["clock"] }
+db.workspace = true
 futures.workspace = true
 fs.workspace = true
 gpui.workspace = true
 log.workspace = true
 project.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 file_icons.workspace = true
 theme.workspace = true
 ui.workspace = true
@@ -31,10 +34,10 @@ util.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
+db = { workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
-serde_json.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 theme_settings.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
