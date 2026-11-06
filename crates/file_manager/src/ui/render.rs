@@ -33,8 +33,8 @@ use ui::prelude::*;
 use crate::ui::panel::FileManagerPanel;
 use crate::{
     CancelInput, ConfirmInput, Copy, Cut, Delete, EditLocation, NewFile, NewFolder, Open,
-    OpenContextMenu, Paste, Redo, Refresh, Rename, SelectAll, ToggleBookmark, ToggleSearch,
-    ToggleSidebar, ToggleViewMode, Trash, Undo,
+    OpenAsWorkspace, OpenContextMenu, Paste, Redo, Refresh, Rename, SelectAll, ToggleBookmark,
+    ToggleSearch, ToggleSidebar, ToggleViewMode, Trash, Undo,
 };
 
 /// Renders the whole panel.
@@ -80,6 +80,9 @@ pub(super) fn render(
         }))
         .on_action(cx.listener(|this, _: &Open, window, cx| {
             this.open_selected(window, cx);
+        }))
+        .on_action(cx.listener(|this, _: &OpenAsWorkspace, window, cx| {
+            this.open_as_workspace(window, cx);
         }))
         .on_action(cx.listener(|this, _: &OpenContextMenu, window, cx| {
             this.deploy_context_menu(window.mouse_position(), window, cx);

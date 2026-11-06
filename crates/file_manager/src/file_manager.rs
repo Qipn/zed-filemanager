@@ -51,6 +51,9 @@ actions!(
         ToggleFocus,
         /// Opens the selected entry.
         Open,
+        /// Opens the selected folder (or the current folder) as a new Zed
+        /// workspace, so what the file manager found can be edited right away.
+        OpenAsWorkspace,
         /// Opens the context menu for the selected entry.
         OpenContextMenu,
         /// Creates a new folder in the current directory.

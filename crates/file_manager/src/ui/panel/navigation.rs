@@ -8,7 +8,8 @@
 use std::path::{Path, PathBuf};
 
 use gpui::{Context, SharedString, TaskExt, Window};
-use workspace::{OpenOptions, OpenVisible};
+use util::ResultExt;
+use workspace::{OpenMode, OpenOptions, OpenVisible};
 
 use super::FileManagerPanel;
 use crate::model::entries::DirEntry;
@@ -71,6 +72,39 @@ impl FileManagerPanel {
                 .map(Path::to_path_buf)
                 .unwrap_or_else(|| path.clone());
             self.set_current_dir(parent, Some(path), window, cx);
+        }
+    }
+
+    /// Opens a folder as a new Zed workspace.
+    ///
+    /// The panel browses folders that may not belong to the current project, so
+    /// this turns "found the folder here, now edit it" into one step. It goes
+    /// through `Workspace::open_workspace_for_paths` with `OpenMode::NewWindow`,
+    /// the same path Zed's own "Open Folder" takes (`recent_projects`), so the
+    /// folder becomes the workspace root and the current window keeps whatever
+    /// it had.
+    ///
+    /// The target is [`Self::workspace_target`]: the selected folder when there
+    /// is one, otherwise the folder being browsed.
+    pub(crate) fn open_as_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(directory) = self.workspace_target() else {
+            return;
+        };
+
+        self.workspace
+            .update(cx, |workspace, cx| {
+                workspace.open_workspace_for_paths(OpenMode::NewWindow, vec![directory], window, cx)
+            })
+            .log_err()
+            .map(|task| task.detach_and_log_err(cx));
+    }
+
+    /// The folder `Open as Workspace` acts on: the active selection when it is a
+    /// folder, otherwise the folder being browsed.
+    pub(crate) fn workspace_target(&self) -> Option<PathBuf> {
+        match self.selected_entry() {
+            Some(entry) if entry.is_dir => Some(entry.path),
+            _ => self.current_dir.clone(),
         }
     }
 

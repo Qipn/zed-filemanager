@@ -12,8 +12,8 @@ use ui::prelude::*;
 use super::{DeployedContextMenu, FileManagerPanel};
 use crate::ui::views::ViewMode;
 use crate::{
-    Copy, Cut, Delete, NewFile, NewFolder, Open, Paste, Redo, Refresh, Rename, SelectAll,
-    ToggleBookmark, Trash, Undo,
+    Copy, Cut, Delete, NewFile, NewFolder, Open, OpenAsWorkspace, Paste, Redo, Refresh, Rename,
+    SelectAll, ToggleBookmark, Trash, Undo,
 };
 
 impl FileManagerPanel {
@@ -49,6 +49,9 @@ impl FileManagerPanel {
     ) {
         let has_selection = !self.selected.is_empty();
         let has_clipboard = self.clipboard.is_some();
+        // Only a folder can become a workspace root (a file would silently open
+        // its parent, which is not what the menu says).
+        let selection_is_dir = self.selected_entry().is_some_and(|entry| entry.is_dir);
         let bookmark_label = self.bookmark_toggle_label();
         let focus_handle = self.focus_handle.clone();
 
@@ -57,6 +60,11 @@ impl FileManagerPanel {
             move |menu, _, _| {
                 menu.context(focus_handle.clone())
                     .action_disabled_when(!has_selection, "Open", Box::new(Open))
+                    .action_disabled_when(
+                        !selection_is_dir,
+                        "Open as Workspace",
+                        Box::new(OpenAsWorkspace),
+                    )
                     .separator()
                     .action_disabled_when(!has_selection, "Rename", Box::new(Rename))
                     .action_disabled_when(!has_selection, "Copy", Box::new(Copy))
@@ -98,6 +106,7 @@ impl FileManagerPanel {
                 .is_some_and(|results| !results.entries.is_empty());
         let can_undo = self.undo_manager.can_undo();
         let can_redo = self.undo_manager.can_redo();
+        let has_current_dir = self.current_dir.is_some();
         let bookmark_label = self.bookmark_toggle_label();
         let focus_handle = self.focus_handle.clone();
 
@@ -110,6 +119,12 @@ impl FileManagerPanel {
                     .action_disabled_when(!has_clipboard, "Paste", Box::new(Paste))
                     .action_disabled_when(!has_entries, "Select All", Box::new(SelectAll))
                     .action("Refresh", Box::new(Refresh))
+                    // The folder being browsed can become a workspace root.
+                    .action_disabled_when(
+                        !has_current_dir,
+                        "Open as Workspace",
+                        Box::new(OpenAsWorkspace),
+                    )
                     .separator()
                     .action_disabled_when(!can_undo, "Undo", Box::new(Undo))
                     .action_disabled_when(!can_redo, "Redo", Box::new(Redo))

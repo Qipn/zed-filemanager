@@ -706,3 +706,68 @@ async fn test_render_grid_and_details_pane(cx: &mut TestAppContext) {
             .expect("failed to open the test window");
     });
 }
+
+/// `Open as Workspace` acts on the selected folder, and on the folder being
+/// browsed when the selection is empty or not a folder.
+#[gpui::test]
+async fn test_open_as_workspace_targets_the_folder(cx: &mut TestAppContext) {
+    init_globals(cx);
+
+    let fs = fs::FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/home/alice",
+        serde_json::json!({
+            "projects": {},
+            "notes.txt": "hello",
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), ["/home/alice".as_ref()], cx).await;
+
+    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        FileManagerPanel::new(workspace, window, cx)
+    });
+    cx.background_executor.run_until_parked();
+    panel.read_with(cx, |panel, _cx| {
+        assert!(
+            !panel.entries.is_empty(),
+            "the folder has to be loaded before a selection can be made"
+        );
+    });
+
+    // Nothing selected: the folder being browsed.
+    panel.read_with(cx, |panel, _cx| {
+        assert_eq!(
+            panel.workspace_target().as_deref(),
+            Some(std::path::Path::new("/home/alice"))
+        );
+    });
+
+    // A selected folder becomes the workspace root.
+    panel.update(cx, |panel, cx| {
+        panel.selected = vec![std::path::PathBuf::from("/home/alice/projects")];
+        cx.notify();
+    });
+    panel.read_with(cx, |panel, _cx| {
+        assert_eq!(
+            panel.workspace_target().as_deref(),
+            Some(std::path::Path::new("/home/alice/projects")),
+            "the selected folder is the target"
+        );
+    });
+
+    // A selected file does not: opening its parent as a workspace is not what
+    // the menu entry says, so the command falls back to the current folder.
+    panel.update(cx, |panel, cx| {
+        panel.selected = vec![std::path::PathBuf::from("/home/alice/notes.txt")];
+        cx.notify();
+    });
+    panel.read_with(cx, |panel, _cx| {
+        assert_eq!(
+            panel.workspace_target().as_deref(),
+            Some(std::path::Path::new("/home/alice")),
+            "a file selection keeps the current folder as the target"
+        );
+    });
+}
