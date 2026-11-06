@@ -266,10 +266,17 @@ fn render_tree(
     let current_dir = this.current_dir.clone();
 
     let mut list = v_flex()
-        .id("file-manager-tree")
+        // The scrolled element holds the rows directly: `ScrollHandle` records
+        // the bounds of the *children* of the element it tracks, which is what
+        // lets `scroll_tree_to_current` scroll the current row into view.
+        .id("file-manager-tree-scroll")
+        .flex_1()
+        .min_h(px(0.))
         .w_full()
         .px(px(7.))
-        .py(px(6.));
+        .py(px(metrics::TREE_PANE_PADDING))
+        .overflow_y_scroll()
+        .track_scroll(&this.tree_scroll);
     if rows.is_empty() {
         list = list.child(
             Label::new("No folder tree")
@@ -352,13 +359,5 @@ fn render_tree(
         );
     }
 
-    div()
-        .id("file-manager-tree-scroll")
-        .flex_1()
-        .min_h(px(0.))
-        .overflow_y_scroll()
-        // `track_scroll` lets `reveal_in_tree` scroll the current row into view.
-        .track_scroll(&this.tree_scroll)
-        .child(list)
-        .into_any_element()
+    list.into_any_element()
 }

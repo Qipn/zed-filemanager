@@ -511,6 +511,102 @@ async fn test_tree_reveals_the_current_directory(cx: &mut TestAppContext) {
     });
 }
 
+/// The sidebar keeps following the content area after the tree root loaded.
+///
+/// Regression test for "the tree follows only once": `refresh_tree` returned
+/// early whenever the current folder was still inside the sticky root, so every
+/// navigation after the initial load skipped `reveal_in_tree` — no lazy
+/// expansion down to the folder, and no scrolling into view.
+#[gpui::test]
+async fn test_tree_follows_the_content_area_after_the_root_loads(cx: &mut TestAppContext) {
+    init_globals(cx);
+
+    let fs = fs::FakeFs::new(cx.background_executor.clone());
+    let mut tree = serde_json::Map::new();
+    // Enough siblings that the target row sits below the fold of the tree pane.
+    for index in 0..30 {
+        tree.insert(format!("dir{index:02}"), serde_json::json!({}));
+    }
+    tree.insert(
+        "projects".into(),
+        serde_json::json!({ "demo": { "src": {} } }),
+    );
+    tree.insert("other".into(), serde_json::json!({ "nested": {} }));
+    fs.insert_tree("/home/alice", serde_json::Value::Object(tree))
+        .await;
+
+    let project = Project::test(fs.clone(), ["/home/alice".as_ref()], cx).await;
+
+    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        FileManagerPanel::new(workspace, window, cx)
+    });
+
+    let window = cx.update(|_window, cx| {
+        cx.open_window(WindowOptions::default(), |_window, _cx| panel.clone())
+            .expect("failed to open the test window")
+    });
+    let window = window.into();
+    // Let the tree root finish loading: this is the moment after which the tree
+    // used to stop following the content area.
+    cx.background_executor.run_until_parked();
+    panel.read_with(cx, |panel, _cx| {
+        assert!(!panel.tree_nodes.is_empty(), "the tree root must be loaded");
+    });
+
+    // Open a nested folder from the content area.
+    cx.update_window(window, |_, window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.navigate_to(
+                std::path::PathBuf::from("/home/alice/projects/demo"),
+                window,
+                cx,
+            );
+        });
+    })
+    .unwrap();
+    cx.background_executor.run_until_parked();
+
+    panel.read_with(cx, |panel, _cx| {
+        let rows = crate::model::tree::visible_rows(&panel.tree_nodes);
+        let paths: Vec<&std::path::Path> = rows.iter().map(|node| node.path.as_path()).collect();
+        assert!(
+            paths.contains(&std::path::Path::new("/home/alice/projects/demo")),
+            "the current folder is revealed in the tree, rows: {paths:?}"
+        );
+        let projects = rows
+            .iter()
+            .find(|node| node.path == std::path::Path::new("/home/alice/projects"))
+            .expect("the ancestor of the current folder is in the tree");
+        assert!(
+            projects.expanded,
+            "the ancestors of the current folder are expanded, rows: {paths:?}"
+        );
+        assert_eq!(
+            panel.last_revealed.as_deref(),
+            Some(std::path::Path::new("/home/alice/projects/demo")),
+            "the reveal ran for the folder that was opened"
+        );
+    });
+
+    // The scroll is applied while the rows are painted.
+    for _ in 0..2 {
+        cx.update_window(window, |_, window, cx| {
+            let _ = window.draw(cx);
+        })
+        .unwrap();
+        cx.background_executor.run_until_parked();
+    }
+
+    panel.read_with(cx, |panel, _cx| {
+        assert!(
+            f32::from(panel.tree_scroll.offset().y) < 0.,
+            "the current row is scrolled into view, offset: {:?}",
+            panel.tree_scroll.offset()
+        );
+    });
+}
+
 /// Navigating folds the branches that are no longer on the current path.
 ///
 /// The tree mirrors the current location: entering a folder expands its chain,

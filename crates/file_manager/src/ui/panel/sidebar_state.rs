@@ -8,7 +8,6 @@ use util::ResultExt;
 use super::FileManagerPanel;
 use crate::model::tree::{self, TreeNode};
 use crate::model::xdg::home_dir;
-use crate::ui::ox_theme::metrics;
 use crate::ui::places::build_places;
 
 impl FileManagerPanel {
@@ -54,6 +53,13 @@ impl FileManagerPanel {
         if let (Some(root), Some(current)) = (&self.tree_root, &current) {
             if current.starts_with(root) {
                 self.sync_tree_expansion();
+                // Staying inside the root is the common case (browsing around
+                // home), and it still has to *reveal* the new folder: the
+                // ancestors that were never opened are read lazily and the row
+                // is scrolled into view. Returning here without this used to
+                // make the tree follow only once, when the root finished
+                // loading.
+                self.reveal_in_tree(window, cx);
                 return;
             }
         }
@@ -185,11 +191,12 @@ impl FileManagerPanel {
 
     /// Scrolls the tree so the current directory's row is visible.
     ///
-    /// The tree is a plain column (not a `uniform_list`), so the offset is
-    /// computed from the row index and the fixed row pitch. The container clamps
-    /// the offset itself during paint (`clamp_scroll_position`), so this must not
-    /// clamp against `max_offset`: on the first frame after expanding, that value
-    /// is still 0 and clamping against it would silently skip the scroll.
+    /// `scroll_to_item` scrolls the least amount that makes the row fully
+    /// visible (and does nothing when it already is), using the bounds GPUI
+    /// recorded for the scroll container's children. That is why the rows are
+    /// direct children of the element tracked by `tree_scroll`, and why this
+    /// does not compute an offset from a row pitch: it would neither know the
+    /// viewport height nor the real padding.
     pub(crate) fn scroll_tree_to_current(&self) {
         let Some(current) = self.current_dir.as_deref() else {
             return;
@@ -198,13 +205,7 @@ impl FileManagerPanel {
         let Some(index) = rows.iter().position(|node| node.path == current) else {
             return;
         };
-
-        // `py(6)` padding of the list plus one row per entry; keep one row of
-        // context above the target.
-        let top = metrics::TREE_PANE_PADDING + metrics::TREE_ROW * index as f32;
-        let y = -(top - metrics::TREE_ROW).max(0.);
-        self.tree_scroll
-            .set_offset(gpui::point(gpui::px(0.), gpui::px(y)));
+        self.tree_scroll.scroll_to_item(index);
     }
 
     /// Scrolls the tree into view on the next frame.
