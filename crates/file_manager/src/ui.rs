@@ -5,6 +5,7 @@
 //! the model never calls back into it.
 
 pub(crate) mod details_pane;
+pub(crate) mod drag;
 pub(crate) mod ox_theme;
 pub(crate) mod panel;
 pub(crate) mod places;
