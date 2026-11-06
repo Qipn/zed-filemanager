@@ -1075,6 +1075,7 @@
       "ctrl-shift-i": "file_manager::ToggleViewMode",
       "ctrl-f": "file_manager::ToggleSearch",
       "ctrl-l": "file_manager::EditLocation",
+      "ctrl-d": "file_manager::ToggleBookmark",
     },
   },
   {

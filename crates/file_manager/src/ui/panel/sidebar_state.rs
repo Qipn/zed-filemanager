@@ -7,13 +7,20 @@ use util::ResultExt;
 
 use super::FileManagerPanel;
 use crate::model::tree::{self, TreeNode};
-use crate::ui::places::{build_places, home_dir};
+use crate::model::xdg::home_dir;
+use crate::ui::places::build_places;
 
 impl FileManagerPanel {
     // ---- OpenXplorer layout: places, folder tree, sidebar and view mode ----
 
-    /// Rebuilds the "Places" list of the sidebar.
+    /// Rebuilds the "Places" list of the sidebar, re-reading the bookmarks.
     pub(crate) fn refresh_places(&mut self, cx: &mut Context<Self>) {
+        self.bookmarks = crate::model::bookmarks::load();
+        self.rebuild_places(cx);
+    }
+
+    /// Rebuilds the "Places" list from the cached bookmarks.
+    pub(crate) fn rebuild_places(&mut self, cx: &mut Context<Self>) {
         let home = home_dir();
         let roots = self
             .project
@@ -22,7 +29,8 @@ impl FileManagerPanel {
             .folder_path_list()
             .paths()
             .to_vec();
-        self.places = build_places(home.as_ref(), roots);
+        self.places = build_places(home.as_ref(), roots, &self.bookmarks);
+        cx.notify();
     }
 
     /// Makes sure the folder tree has a root and shows its children.
@@ -115,6 +123,11 @@ impl FileManagerPanel {
     }
 
     /// Expands the already loaded ancestors of the current directory.
+    ///
+    /// Only the ancestors are expanded, never the current directory itself:
+    /// clicking a tree row only navigates, and expanding a folder is the job of
+    /// its chevron (`>`), like GNOME Files' tree sidebar. A folder that was
+    /// opened before therefore keeps whatever expansion state the user gave it.
     fn sync_tree_expansion(&mut self) {
         let Some(root) = self.tree_root.clone() else {
             return;
@@ -124,8 +137,16 @@ impl FileManagerPanel {
         };
         let chain = tree::ancestor_chain(&current, &root);
         for path in chain.iter().skip(1) {
+            if path == &current {
+                continue;
+            }
+            // Auto-expanding a node whose children were never read would flip
+            // its chevron down while showing nothing, so only loaded nodes are
+            // expanded; the rest stay to be opened with the chevron.
             if let Some(node) = TreeNode::find_mut(&mut self.tree_nodes, path) {
-                node.expanded = true;
+                if node.loaded {
+                    node.expanded = true;
+                }
             }
         }
     }

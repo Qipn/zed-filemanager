@@ -4,15 +4,16 @@
 //! `context_menu` slot; the panel owns the deployed menu and renders it.
 
 use gpui::{
-    Anchor, Context, DismissEvent, Focusable, IntoElement, Pixels, Point, Window, anchored,
-    deferred,
+    Anchor, ClipboardItem, Context, DismissEvent, Focusable, IntoElement, Pixels, Point, Window,
+    anchored, deferred,
 };
 use ui::prelude::*;
 
 use super::{DeployedContextMenu, FileManagerPanel};
 use crate::ui::views::ViewMode;
 use crate::{
-    Copy, Cut, Delete, NewFile, NewFolder, Open, Paste, Redo, Refresh, Rename, Trash, Undo,
+    Copy, Cut, Delete, NewFile, NewFolder, Open, Paste, Redo, Refresh, Rename, ToggleBookmark,
+    Trash, Undo,
 };
 
 impl FileManagerPanel {
@@ -27,6 +28,13 @@ impl FileManagerPanel {
         let has_clipboard = self.clipboard.is_some();
         let can_undo = self.undo_manager.can_undo();
         let can_redo = self.undo_manager.can_redo();
+        // GNOME Files offers the bookmark toggle for the current location in
+        // the same menu that holds the file actions.
+        let bookmark_label = if self.current_dir_is_bookmarked() {
+            "Remove from Bookmarks"
+        } else {
+            "Add to Bookmarks"
+        };
         let menu = ui::ContextMenu::build(window, cx, |menu, _, _| {
             menu.context(self.focus_handle.clone())
                 .action_disabled_when(!has_selection, "Open", Box::new(Open))
@@ -42,6 +50,8 @@ impl FileManagerPanel {
                 .separator()
                 .action_disabled_when(!can_undo, "Undo", Box::new(Undo))
                 .action_disabled_when(!can_redo, "Redo", Box::new(Redo))
+                .separator()
+                .action(bookmark_label, Box::new(ToggleBookmark))
                 .separator()
                 .action_disabled_when(!has_selection, "Move to Trash", Box::new(Trash))
                 .action_disabled_when(!has_selection, "Delete Permanently", Box::new(Delete))
@@ -98,6 +108,63 @@ impl FileManagerPanel {
             _subscription: subscription,
         });
         cx.notify();
+    }
+
+    /// The context menu of a sidebar row.
+    ///
+    /// GNOME Files offers the same three actions on a places row: open the
+    /// folder, pin or unpin it, and copy its location
+    /// (`nautilus-sidebar.c::on_row_pressed`).
+    pub(crate) fn deploy_place_menu(
+        &mut self,
+        path: std::path::PathBuf,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let panel = cx.entity();
+        let focus = self.focus_handle.clone();
+        let is_bookmark = self.is_bookmarked(&path);
+        let location = path.display().to_string();
+
+        self.deploy_menu(
+            position,
+            move |menu, _, _| {
+                let mut menu = menu.context(focus).entry("Open", None, {
+                    let panel = panel.clone();
+                    let path = path.clone();
+                    move |window, cx| {
+                        panel.update(cx, |state, cx| {
+                            state.navigate_to(path.clone(), window, cx);
+                        });
+                    }
+                });
+
+                menu = if is_bookmark {
+                    menu.entry("Remove from Bookmarks", None, {
+                        let panel = panel.clone();
+                        let path = path.clone();
+                        move |_, cx| {
+                            panel.update(cx, |state, cx| state.remove_bookmark(&path, cx));
+                        }
+                    })
+                } else {
+                    menu.entry("Add to Bookmarks", None, {
+                        let panel = panel.clone();
+                        let path = path.clone();
+                        move |_, cx| {
+                            panel.update(cx, |state, cx| state.add_bookmark(path.clone(), cx));
+                        }
+                    })
+                };
+
+                menu.entry("Copy Path", None, move |_, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(location.clone()));
+                })
+            },
+            window,
+            cx,
+        );
     }
 
     /// The "New" menu of the command bar.

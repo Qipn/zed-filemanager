@@ -32,7 +32,7 @@ use ui::prelude::*;
 use crate::ui::panel::FileManagerPanel;
 use crate::{
     Copy, Cut, Delete, EditLocation, NewFile, NewFolder, Open, OpenContextMenu, Paste, Redo,
-    Refresh, Rename, ToggleSearch, ToggleSidebar, ToggleViewMode, Trash, Undo,
+    Refresh, Rename, ToggleBookmark, ToggleSearch, ToggleSidebar, ToggleViewMode, Trash, Undo,
 };
 
 /// Renders the whole panel.
@@ -114,6 +114,9 @@ pub(super) fn render(
         }))
         .on_action(cx.listener(|this, _: &EditLocation, _, cx| {
             this.begin_path_edit(cx);
+        }))
+        .on_action(cx.listener(|this, _: &ToggleBookmark, _, cx| {
+            this.toggle_bookmark(cx);
         }))
         .on_action(cx.listener(|this, _: &ToggleViewMode, _, cx| {
             this.set_view_mode(

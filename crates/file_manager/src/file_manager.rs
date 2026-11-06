@@ -15,8 +15,11 @@
 //!   - [`model::clipboard`]: the panel clipboard and file-operation helpers.
 //!   - [`model::conflict`]: name-conflict resolution for paste and drag.
 //!   - [`model::undo`]: the undo/redo history.
+//!   - [`model::xdg`]: the home, config and quick-access directories.
+//!   - [`model::bookmarks`]: the folders pinned to the sidebar.
 //! - [`ui`]: the `gpui` layer.
 //!   - [`ui::panel`]: the `FileManagerPanel` entity and its `Panel` impl.
+//!   - [`ui::panel::bookmarks`]: pinning and unpinning sidebar folders.
 //!   - [`ui::render`]: the OpenXplorer layout.
 //!   - [`ui::views`]: the details view and the icon grid.
 //!   - [`ui::sidebar`]: the places list and the folder tree.
@@ -78,6 +81,8 @@ actions!(
         ToggleSearch,
         /// Turns the location slot into the editable path field.
         EditLocation,
+        /// Pins the current folder in the sidebar, or unpins it.
+        ToggleBookmark,
     ]
 );
 

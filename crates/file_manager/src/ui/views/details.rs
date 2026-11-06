@@ -120,53 +120,53 @@ pub(super) fn render_details_row(
                 .gap(px(11.))
                 // The expander, in front of the icon. Like OpenXplorer, the
                 // indentation grows by 16 px per level. Non-directories keep
-                // the 16 px placeholder so the icons stay aligned.
+                // the 16 px box so the icons stay aligned.
+                //
+                // The indent is a spacer *before* the expander box: putting the
+                // width on the box itself would leave the chevron pinned to the
+                // left edge while only the icon moved right, so the expander of
+                // an expanded folder would not follow its parent.
+                .child(
+                    div()
+                        .id(SharedString::from(format!(
+                            "file-manager-indent-{}",
+                            entry.path.display()
+                        )))
+                        .w(px(metrics::TREE_INDENT * depth as f32))
+                        .flex_shrink_0(),
+                )
                 .child(
                     div()
                         .id(SharedString::from(format!(
                             "file-manager-expander-{}",
                             entry.path.display()
                         )))
-                        .w(px(metrics::TREE_INDENT * depth as f32))
+                        .w(px(16.))
+                        .h(px(16.))
                         .flex_shrink_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
                         .when(can_expand, |expander| {
-                            expander.child(
-                                h_flex()
-                                    .id(SharedString::from(format!(
-                                        "file-manager-expander-hit-{}",
-                                        entry.path.display()
-                                    )))
-                                    .w(px(16.))
-                                    .h(px(16.))
-                                    .flex_shrink_0()
-                                    .items_center()
-                                    .justify_center()
-                                    .child(
-                                        Icon::new(if is_expanded {
-                                            IconName::ChevronDown
-                                        } else {
-                                            IconName::ChevronRight
-                                        })
-                                        .size(IconSize::XSmall)
-                                        .color(Color::Custom(palette.muted)),
-                                    )
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(
-                                            move |this, _event: &MouseDownEvent, window, cx| {
-                                                this.toggle_entry_expanded(
-                                                    &expand_path,
-                                                    window,
-                                                    cx,
-                                                );
-                                                cx.stop_propagation();
-                                            },
-                                        ),
+                            expander
+                                .child(
+                                    Icon::new(if is_expanded {
+                                        IconName::ChevronDown
+                                    } else {
+                                        IconName::ChevronRight
+                                    })
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Custom(palette.muted)),
+                                )
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(
+                                        move |this, _event: &MouseDownEvent, window, cx| {
+                                            this.toggle_entry_expanded(&expand_path, window, cx);
+                                            cx.stop_propagation();
+                                        },
                                     ),
-                            )
-                        })
-                        .when(!can_expand, |expander| {
-                            expander.child(div().w(px(16.)).h(px(16.)).flex_shrink_0())
+                                )
                         }),
                 )
                 .child(

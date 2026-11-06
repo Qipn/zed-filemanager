@@ -2,6 +2,7 @@
 //! `Panel` trait implementation. Rendering lives in `render.rs`, the menu
 //! builders in `panel/menus.rs`.
 
+mod bookmarks;
 mod file_ops;
 mod layout;
 mod menus;
@@ -30,6 +31,7 @@ use workspace::{
 };
 
 use crate::ToggleFocus;
+use crate::model::bookmarks::Bookmark;
 use crate::model::clipboard::{Clipboard, RenameState};
 use crate::model::entries::{DirEntry, SortMode, read_entries};
 use crate::model::tree::TreeNode;
@@ -125,6 +127,8 @@ pub struct FileManagerPanel {
     pub(crate) sidebar_split: f32,
     /// The places list of the sidebar.
     pub(crate) places: Vec<PlaceEntry>,
+    /// The folders the user pinned; they are also part of `places`.
+    pub(crate) bookmarks: Vec<Bookmark>,
     /// The root of the folder tree.
     pub(crate) tree_root: Option<PathBuf>,
     /// The direct children of the tree root.
@@ -193,6 +197,7 @@ impl FileManagerPanel {
             sidebar_width: metrics::SIDEBAR_WIDTH,
             sidebar_split: 0.5,
             places: Vec::new(),
+            bookmarks: Vec::new(),
             tree_root: None,
             tree_nodes: Vec::new(),
             content_width: None,
