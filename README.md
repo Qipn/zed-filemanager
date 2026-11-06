@@ -260,8 +260,8 @@ script/link-zed-data --yes --while-running  # 不想关编辑器时（db 只能�
   所以直接打包已编译的二进制，构建只要几秒；代价是不用 SDK 里的 Rust 工具链
 - **NixOS 特有**：宿主机构建的二进制，ELF 解释器与 RUNPATH 都指向 `/nix/store`，
   沙箱默认看不到 → 会报 `bwrap: execvp zed: No such file or directory`。
-  清单里加了 `--filesystem=/nix/store:ro` 让它能解析（沙箱因此变宽，这是不在沙箱内
-  重编译的代价）
+  清单里挂的是整个 `--filesystem=/nix:rw`（不是 `store:ro`）：除了让 loader 找到二进制，
+  还要让沙箱里的 nix 读 profile/channel 并连上宿主 daemon（见下一节）
 - **显卡驱动也要挂**：NixOS 的 GL/Vulkan 驱动在 `/run/opengl-driver`，不在 `/usr/lib`。
   不挂它，wgpu 一个 HAL 后端都建不起来，报
   `Failed to create surface for any enabled backend: {}`。清单里加了
@@ -294,6 +294,49 @@ script/build-flatpak --binary /run/current-system/sw/bin/true
 flatpak run io.github.qipn.ZedFileManager   # 桩程序会报 "unknown program 'zed'"，说明能执行
 flatpak uninstall -y io.github.qipn.ZedFileManager
 ```
+
+### Flatpak 里用宿主工具链（开发用）
+
+Flatpak 没有“关闭沙箱”的开关，所以这里用了两条互补的路子。两者都打开后，Flatpak 版
+和原生版在开发体验上没区别，而安装仍然只有一条 `script/build-flatpak`。
+
+**B. 终端跑在宿主上**（`crates/terminal/src/terminal.rs`）：
+
+- 启动命令被包成 `flatpak-spawn --host --directory=<cwd> <shell>`，经 session D-Bus
+  portal 在宿主执行（VS Code / GNOME Builder 的做法）；Flatpak 1.15+ 才转发 stdin，
+  pty 因此仍然可用
+- `Shell::System`（默认 shell）用 launcher 解析出的 `$SHELL`：`flatpak-spawn` **不允许省略
+  命令**（自己说一句 `No command specified` 就退出），所以必须显式传一个宿主存在的 shell。
+  launcher 会向宿主问一次（`flatpak-spawn --host /bin/sh -c 'printf %s "$SHELL"'`，约 7ms），
+  拿到用户真实的 zsh/bash；问不到才退回 `/run/current-system/sw/bin/bash`
+- 只转发 `TERM` / `COLORTERM` / `TERM_PROGRAM` / `ZED_TERM` / `LANG` / `TZ`：沙箱的
+  `PATH=/app/bin:/usr/bin` 传给宿主进程会把宿主的工具全部遮住
+- 需要清单里的 `--talk-name=org.freedesktop.Flatpak`，否则报
+  `Portal call failed: ServiceUnknown`
+- 临时关掉：`flatpak run --env=ZED_FLATPAK_HOST_SHELL=0 io.github.qipn.ZedFileManager`
+- 终端面板和 **agent 的终端工具**都走这里（都调用 `environment.create_terminal`），
+  所以 agent 也能直接跑 `script/build-zed`
+
+**C. 沙箱里补齐 nix 工具链**（清单 + `script/build-flatpak` 生成的 launcher）：
+
+- `--filesystem=/run/current-system:ro` —— NixOS 的 `nix-shell` / `cc` / `pkg-config`
+  都在系统 profile 里
+- launcher 里 `export PATH="/run/current-system/sw/bin:$PATH"` —— 放在最前面，Zed 自己
+  spawn 的进程（LSP、git、任务）也能用；这也让 `#!/usr/bin/env bash` 落到 nix 的 bash
+- **`SHELL` 也要修**：Flatpak 合成的 `/etc/passwd` 与 `SHELL` 都是 `/bin/sh`，而
+  `get_system_shell()`（`crates/util/src/shell.rs`）只看 `$SHELL`，于是终端变成运行时的 bash
+  以 sh 模式启动——不读 `~/.bashrc` / `~/.zshrc`，没有补全。launcher 因此向宿主问一次登录
+  shell（实测是 `/run/current-system/sw/bin/zsh`，它在 `/run/current-system` 挂进来后沙箱内也可见），
+  问不到再退回系统 profile 的 bash
+- `export NIX_REMOTE=daemon` —— 普通用户不能直接写 `/nix/store`，必须走宿主 nix-daemon
+  （socket 在 `/nix/var`，靠 `/nix:rw` 挂进来）。好处是 nix 自己的构建沙箱跑在宿主侧，
+  不会和外层 Flatpak 的 user namespace 叠加
+- `export NIX_CONFIG="experimental-features = nix-command flakes"` —— 沙箱的 `/etc` 是
+  运行时的，读不到 `/etc/nix/nix.conf`
+
+代价（务必知道）：`--talk-name=org.freedesktop.Flatpak` + `/nix:rw` 之后，这个包基本不再提供
+隔离，只剩文件系统那几条限制。它适合“本地开发构建”，不适合当发布包。要收紧就删掉这两条，
+并把 `/nix:rw` 改回 `/nix/store:ro`。
 
 ---
 
