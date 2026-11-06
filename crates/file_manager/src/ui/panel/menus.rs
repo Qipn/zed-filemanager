@@ -228,6 +228,45 @@ impl FileManagerPanel {
         );
     }
 
+    /// The menu behind the `…` of a truncated breadcrumb: every segment that did
+    /// not fit, so the user can still reach any ancestor in a narrow dock.
+    pub(crate) fn deploy_ancestor_menu(
+        &mut self,
+        segments: Vec<(std::path::PathBuf, gpui::SharedString)>,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let focus_handle = self.focus_handle.clone();
+        let panel = cx.entity();
+        self.deploy_menu(
+            position,
+            move |menu, _, _| {
+                let mut menu = menu.context(focus_handle.clone());
+                for (index, (target, name)) in segments.into_iter().enumerate() {
+                    // The root's label is `/` already; the rest use their path
+                    // component, which is what the breadcrumb shows.
+                    let label = if index == 0 && name.is_empty() {
+                        gpui::SharedString::from("/")
+                    } else {
+                        name
+                    };
+                    menu = menu.entry(label, None, {
+                        let panel = panel.clone();
+                        move |window, cx| {
+                            panel.update(cx, |state, cx| {
+                                state.navigate_to(target.clone(), window, cx);
+                            });
+                        }
+                    });
+                }
+                menu
+            },
+            window,
+            cx,
+        );
+    }
+
     /// The "New" menu of the header bar's new control.
     ///
     /// Mirrors OpenXplorer's `openNewMenu`

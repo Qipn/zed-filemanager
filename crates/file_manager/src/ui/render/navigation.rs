@@ -337,10 +337,36 @@ pub(super) fn render_address_bar(
     }
 
     if skipped > 0 {
+        // The segments that did not fit stay reachable through this menu, so a
+        // narrow dock never hides an ancestor (the old version was a static
+        // label, which made clicking the "username" look like a dead spot).
+        let hidden: Vec<(PathBuf, gpui::SharedString)> = rest[..skipped].to_vec();
+        let tooltip = hidden
+            .last()
+            .map(|(path, _)| path.display().to_string())
+            .unwrap_or_default();
         crumbs = crumbs.child(
-            Label::new("…")
-                .size(LabelSize::Small)
-                .color(Color::Custom(palette.text_tertiary)),
+            h_flex()
+                .id("file-manager-crumb-ellipsis")
+                .h(px(26.))
+                .px(px(9.))
+                .flex_shrink_0()
+                .rounded_xs()
+                .occlude()
+                .hover(|style| style.bg(palette.hover))
+                .tooltip(Tooltip::text(tooltip))
+                .child(
+                    Label::new("…")
+                        .size(LabelSize::Small)
+                        .color(Color::Custom(palette.text_tertiary)),
+                )
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        this.deploy_ancestor_menu(hidden.clone(), event.position, window, cx);
+                    }),
+                ),
         );
     }
 
