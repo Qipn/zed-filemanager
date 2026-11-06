@@ -21,6 +21,10 @@ finish-args:
   - --device=dri
   - --share=ipc
   - --share=network
+  # 原生 Wayland。注意：真正解决"wayland 库加载不到 / mesa 驱动挂掉"的不是这里，
+  # 而是生成的 launcher 把 **nix 的** libwayland-client 放到 LD_LIBRARY_PATH 最前面
+  # （见 script/build-flatpak 里 resolve_wayland_lib 的注释）。fallback-x11 保证
+  # Wayland 不可用时能退回 X11。
   - --socket=wayland
   - --socket=fallback-x11
   - --socket=pulseaudio
@@ -37,18 +41,29 @@ finish-args:
   - --socket=ssh-auth
   - --socket=gpg-agent
   - --env=ZED_UPDATE_EXPLANATION=This is a local build; rebuild it with script/build-flatpak
+  # NixOS 的 GL/Vulkan 驱动不在 /usr/lib，而在 /run/opengl-driver（libglvnd 的
+  # 默认 vendor 目录也指到这里），且 libvulkan.so.1 是 dlopen 的。
+  # 沙箱不挂它的话，wgpu 一个 HAL 后端都建不起来，报
+  # `Failed to create surface for any enabled backend: {}`。
+  - --filesystem=/run/opengl-driver:ro
+  - --env=LD_LIBRARY_PATH=/run/opengl-driver/lib
 
 modules:
   - name: zed
     buildsystem: simple
     build-commands:
-      - install -Dm755 zed ${FLATPAK_DEST}/bin/zed
+      # 真正的二进制装成 zed-bin；zed 是 script/build-flatpak 生成的 launcher（设置
+      # LD_LIBRARY_PATH 后 exec zed-bin），desktop 的 Exec 与 --command 都仍是 zed。
+      - install -Dm755 zed ${FLATPAK_DEST}/bin/zed-bin
+      - install -Dm755 zed-launcher ${FLATPAK_DEST}/bin/zed
       - install -Dm644 ${FLATPAK_ID}.desktop ${FLATPAK_DEST}/share/applications/${FLATPAK_ID}.desktop
       - install -Dm644 ${FLATPAK_ID}.metainfo.xml ${FLATPAK_DEST}/share/metainfo/${FLATPAK_ID}.metainfo.xml
       - install -Dm644 app-icon.png ${FLATPAK_DEST}/share/icons/hicolor/512x512/apps/${FLATPAK_ID}.png
     sources:
       - type: file
         path: build-input/zed
+      - type: file
+        path: build-input/zed-launcher
       - type: file
         path: build-input/app-icon.png
       - type: file

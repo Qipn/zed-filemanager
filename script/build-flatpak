@@ -65,6 +65,45 @@ for tool in flatpak flatpak-builder; do
     fi
 done
 
+# 解析 nix 的 libwayland-client 目录，写进生成的 launcher。
+#
+# 为什么必须是 nix 的，而不是 org.freedesktop.Platform 里的：
+#   沙箱里的进程是 /nix/store 的 ld.so，gpui 靠 dlopen("libwayland-client.so.0") 拿
+#   Wayland；而 nix mesa 26.x 的 EGL/Vulkan 驱动自己也 NEEDED 同一个 soname。
+#   LD_LIBRARY_PATH 的优先级高于 RUNPATH，所以只会加载**一份**：运行时的 1.23 缺
+#   wl_fixes_interface，会让 mesa 的 EGL（Client extensions: []）和 Vulkan
+#   （ERROR_INCOMPATIBLE_DRIVER）全部加载失败，wgpu 一个 HAL 后端都建不起来。
+#   所以取 mesa 自己 RUNPATH 里那份（也就是二进制实际链接的那份 1.25）。
+resolve_wayland_lib() {
+    if [[ -n "${ZED_WAYLAND_LIB:-}" ]]; then
+        printf '%s\n' "$ZED_WAYLAND_LIB"
+        return 0
+    fi
+
+    local vendor_json mesa dir
+    vendor_json="${EGL_VENDOR_FILE:-/run/opengl-driver/share/glvnd/egl_vendor.d/50_mesa.json}"
+    if [[ -r "$vendor_json" ]]; then
+        mesa=$(sed -n 's/.*"library_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$vendor_json" | head -n1)
+    fi
+    if [[ -n "$mesa" && -e "$mesa" ]] && command -v readelf >/dev/null 2>&1; then
+        while IFS= read -r dir; do
+            if [[ -e "$dir/libwayland-client.so.0" ]]; then
+                printf '%s\n' "$dir"
+                return 0
+            fi
+        done < <(readelf -d "$mesa" 2>/dev/null | grep -E 'RUNPATH|RPATH' | grep -oE '/nix/store/[^]:]+')
+    fi
+
+    # 兜底：store 里版本最高的 wayland（wayland-protocols 之类靠 -client 存在性过滤）
+    for dir in $(ls -d /nix/store/*-wayland-[0-9]*/lib 2>/dev/null | sort -V -r); do
+        if [[ -e "$dir/libwayland-client.so.0" ]]; then
+            printf '%s\n' "$dir"
+            return 0
+        fi
+    done
+    return 1
+}
+
 if [[ -z "$BINARY" ]]; then
     if [[ "$SKIP_BUILD" != 1 ]]; then
         echo "building the release binary (this takes a while on a cold target dir)..."
@@ -84,6 +123,29 @@ rm -rf "$BUILD_INPUT"
 mkdir -p "$BUILD_INPUT"
 install -Dm755 "$BINARY" "$BUILD_INPUT/zed"
 install -Dm644 crates/zed/resources/app-icon.png "$BUILD_INPUT/app-icon.png"
+
+# 生成的 launcher：把 nix 的 wayland 放到 LD_LIBRARY_PATH 最前面，然后 exec 真正的二进制。
+# 找不到时退化成直通（非 NixOS 打包机），不会让打包失败。
+WAYLAND_LIB=$(resolve_wayland_lib || true)
+if [[ -n "$WAYLAND_LIB" ]]; then
+    echo "wayland: $WAYLAND_LIB"
+else
+    echo "warn: 没定位到 nix 的 libwayland-client，launcher 不会改写 LD_LIBRARY_PATH。" >&2
+    echo "hint: 非 NixOS 打包机属正常；NixOS 上可用 ZED_WAYLAND_LIB=/nix/store/...-wayland-x.y.z/lib 覆盖。" >&2
+fi
+
+{
+    echo '#!/bin/sh'
+    echo '# 由 script/build-flatpak 生成，不要手改。'
+    if [[ -n "$WAYLAND_LIB" ]]; then
+        echo '# 原生 Wayland：必须用 nix 这份 libwayland-client，用 flatpak 运行时的 1.23 会让'
+        echo '# mesa 26.x 的 EGL/Vulkan 驱动因缺 wl_fixes_interface 而加载失败。'
+        echo "WAYLAND_LIB=$WAYLAND_LIB"
+        echo 'export LD_LIBRARY_PATH="$WAYLAND_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"'
+    fi
+    echo 'exec /app/bin/zed-bin "$@"'
+} > "$BUILD_INPUT/zed-launcher"
+chmod 755 "$BUILD_INPUT/zed-launcher"
 
 if [[ "$MANIFEST_ONLY" == 1 ]]; then
     echo "inputs staged in $BUILD_INPUT; not running flatpak-builder"

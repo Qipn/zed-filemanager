@@ -180,6 +180,39 @@ flatpak run io.github.qipn.ZedFileManager
 
 装好后也能从应用网格 "Zed File Manager" 启动（`.desktop` + 图标 + metainfo 都装进去了）。
 
+#### 启动 / 升级 / 卸载
+
+`script/build-flatpak` 内部是 `flatpak-builder --user --install`，直接装进
+`~/.local/share/flatpak/app/io.github.qipn.ZedFileManager`，**不需要**再手动
+`flatpak install`。装完约 373 MB（二进制会被 strip，debug 符号单独放 `Debug` 运行时）。
+
+```bash
+flatpak run io.github.qipn.ZedFileManager                # 启动
+flatpak run io.github.qipn.ZedFileManager ~/some/dir     # 以指定目录为工作区启动
+
+# 升级：重编 + 重新打包（同一个 app id 原地覆盖，不会并存旧版本）
+script/build-zed --release
+script/build-flatpak --skip-build
+
+# 卸载（加 --delete-data 连同 ~/.var/app 下的配置一起删）
+flatpak uninstall --user io.github.qipn.ZedFileManager
+```
+
+`--bundle` 导出的 `target/release/io.github.qipn.ZedFileManager.flatpak`（约 79 MB）
+可以在同一台机器上重新装、或拷给**另一台 NixOS 机器**：
+
+```bash
+flatpak install --user ./io.github.qipn.ZedFileManager.flatpak
+```
+
+> ⚠️ 这个 bundle **不能**拷到非 NixOS 发行版。里面的 `zed` 是宿主机构建的，ELF
+> 解释器写死成 `/nix/store/…-glibc-2.42-103/ld-linux-x86-64.so.2`，清单里又用
+> `--filesystem=/nix/store:ro` 挂进沙箱；目标机没有同一条 store 路径就起不来。
+> 换发行版请在那台机器上 `script/build-zed --release` 后重新打包。
+
+`flatpak list --app --columns=application,version,size` 里版本显示为 `dev`
+（本项目没打版本号，`metainfo` 也没写 release 条目）。
+
 清单在 `flatpak/io.github.qipn.ZedFileManager.yml`，要点：
 
 - **不在沙箱里编译**：`zed` 的直接依赖（glib/gio、freetype、alsa、xcb、xkbcommon、libstdc++）
@@ -189,8 +222,27 @@ flatpak run io.github.qipn.ZedFileManager
   沙箱默认看不到 → 会报 `bwrap: execvp zed: No such file or directory`。
   清单里加了 `--filesystem=/nix/store:ro` 让它能解析（沙箱因此变宽，这是不在沙箱内
   重编译的代价）
+- **显卡驱动也要挂**：NixOS 的 GL/Vulkan 驱动在 `/run/opengl-driver`，不在 `/usr/lib`。
+  不挂它，wgpu 一个 HAL 后端都建不起来，报
+  `Failed to create surface for any enabled backend: {}`。清单里加了
+  `--filesystem=/run/opengl-driver:ro` 和 `LD_LIBRARY_PATH=/run/opengl-driver/lib`
+  （`libvulkan.so.1` 是 dlopen 的）
+- **原生 Wayland**：gpui 的 `wayland-client` 是 dlopen 的，而进程跑的是 nix 的 `ld.so`，
+  它搜不到运行时里的 `libwayland-client`；而 `LD_LIBRARY_PATH` 的优先级高于 RUNPATH，
+  所以**只能放 nix 那一份**——运行时的 1.23 比 nix mesa 26.x 需要的 1.25 老，缺
+  `wl_fixes_interface`，会让 mesa 的 EGL/Vulkan 驱动一并加载失败
+  （`Client extensions: []` / `ERROR_INCOMPATIBLE_DRIVER`）。而那个 store 路径是打包机相关的，
+  不能写进仓库里的静态清单，所以 `script/build-flatpak` 会解析出来（走 glvnd 的
+  `50_mesa.json` → mesa 的 RUNPATH，拿到与二进制实际链接一致的那份），生成一个 launcher：
+  - `/app/bin/zed-bin` —— 真正的二进制
+  - `/app/bin/zed` —— 生成的 sh shim：把 nix 的 wayland 放进 `LD_LIBRARY_PATH` 后 `exec zed-bin`
+
+  打包机换了 nix store 路径时要重新 `script/build-flatpak`（可用 `ZED_WAYLAND_LIB=...` 覆盖）。
+  副作用：`wgpu` 因此选到了 **Vulkan（RADV）** 而不是 GL，比之前的 GL 后端快不少
 - app id 用 `io.github.qipn.ZedFileManager`（与上游 Flathub 的 `dev.zed.Zed` 区分开）
-- desktop 的 `Exec` 用 `zed --foreground %U`；编辑器二进制**不认 `--new`**（那是 CLI 的参数）
+- desktop 的 `Exec` 用 `zed %U`。**不要写 `--foreground`**：那个参数属于 `crates/cli`
+  的 CLI 包装器，我们打包的是 `crates/zed` 的 app 二进制，会报
+  `unexpected argument '--foreground'`
 - 依赖 `org.freedesktop.Sdk//24.08` 与 `org.freedesktop.Platform//24.08`：
   `flatpak install flathub org.freedesktop.Sdk//24.08`
 - `flatpak/build/`、`flatpak/build-input/`、`flatpak/.builder/` 已在 `.gitignore`
