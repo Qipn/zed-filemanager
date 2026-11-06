@@ -4,7 +4,7 @@
 //! results are dropped when they arrive, which mirrors nautilus cancelling its
 //! engine through a `GCancellable` (`nautilus-search-provider.c`).
 
-use gpui::{Context, Window};
+use gpui::{Context, Focusable, Window};
 use util::ResultExt;
 
 use super::FileManagerPanel;
@@ -25,7 +25,7 @@ impl FileManagerPanel {
                 window.focus(&self.focus_handle, cx);
             }
             None => {
-                self.path_edit = None;
+                self.path_editing = false;
                 // Only one inline editor may hold the focus, like
                 // `project_panel` discarding its edit state on a new action.
                 if self.rename_state.is_some() {

@@ -31,7 +31,7 @@ impl FileManagerPanel {
         self.clear_search_results();
         // It also closes any inline editor, so a stale path buffer or rename
         // cannot survive a jump made from the sidebar or the history buttons.
-        self.path_edit = None;
+        self.path_editing = false;
         self.rename_state = None;
         if let Some(path) = selected {
             self.selected.push(path);
@@ -196,7 +196,7 @@ impl FileManagerPanel {
     pub(crate) fn begin_path_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.search_query = None;
         let path = self.current_dir_label().to_string();
-        self.path_edit = Some(path.clone());
+        self.path_editing = true;
         self.path_field.update(cx, |field, cx| {
             let end = path.len();
             field.set_text_with_selection(&path, 0..end, window, cx);
@@ -207,7 +207,7 @@ impl FileManagerPanel {
 
     /// Focuses the editable location entry, if it is open.
     pub(crate) fn focus_path_field(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.path_edit.is_none() {
+        if !self.path_editing {
             return;
         }
         let focus = self.path_field.read(cx).focus_handle(cx);
@@ -215,7 +215,8 @@ impl FileManagerPanel {
     }
 
     pub(crate) fn cancel_path_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.path_edit.take().is_some() {
+        if self.path_editing {
+            self.path_editing = false;
             window.focus(&self.focus_handle, cx);
             cx.notify();
         }
@@ -229,7 +230,7 @@ impl FileManagerPanel {
     /// `FileManagerPanel` therefore routes Escape here
     /// (`assets/keymaps/default-linux.json`).
     pub(crate) fn cancel_active_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.path_edit.is_some() {
+        if self.path_editing {
             self.cancel_path_edit(window, cx);
         } else if self.rename_state.is_some() {
             self.cancel_rename(window, cx);
@@ -245,7 +246,7 @@ impl FileManagerPanel {
     /// `enter` to `menu::Confirm` and key bindings are dispatched before the
     /// text fields' own key handlers, so the fields cannot confirm themselves.
     pub(crate) fn confirm_active_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.path_edit.is_some() {
+        if self.path_editing {
             self.confirm_path_edit(window, cx);
         } else if self.rename_state.is_some() {
             self.confirm_rename(window, cx);
@@ -260,7 +261,7 @@ impl FileManagerPanel {
     /// free lexical joins. A directory is navigated into; a file selects it in
     /// its parent; a missing path keeps the editor open with the error shown.
     pub(crate) fn confirm_path_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.path_edit.is_none() {
+        if !self.path_editing {
             return;
         }
         let raw = self.path_field.read(cx).content().to_string();
@@ -297,7 +298,7 @@ impl FileManagerPanel {
             this.update_in(cx, |this, window, cx| {
                 if is_dir {
                     this.error = None;
-                    this.path_edit = None;
+                    this.path_editing = false;
                     this.selected.clear();
                     this.selection_anchor = None;
                     this.set_current_dir(target, None, window, cx);
@@ -308,7 +309,7 @@ impl FileManagerPanel {
                         .map(Path::to_path_buf)
                         .unwrap_or_else(|| target.clone());
                     this.error = None;
-                    this.path_edit = None;
+                    this.path_editing = false;
                     this.selected.clear();
                     this.selected.push(target.clone());
                     this.set_current_dir(parent, None, window, cx);

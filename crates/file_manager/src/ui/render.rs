@@ -55,7 +55,7 @@ pub(super) fn render(
                 // Clicking anywhere outside an inline editor leaves it. The
                 // editors and the address bar stop the propagation of their own
                 // clicks, so only clicks on the background reach this handler.
-                if this.path_edit.is_some() {
+                if this.path_editing {
                     this.cancel_path_edit(window, cx);
                 }
                 if this.rename_state.is_some() {

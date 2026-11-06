@@ -93,11 +93,7 @@ pub(super) fn render_tile(
         )
         .child({
             // The inline rename editor replaces the tile name while renaming.
-            let is_renaming = this
-                .rename_state
-                .as_ref()
-                .is_some_and(|state| state.source == entry.path);
-            if is_renaming {
+            if this.is_renaming(&entry.path) {
                 this.rename_field.clone().into_any_element()
             } else {
                 Label::new(entry.name.clone())

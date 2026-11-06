@@ -120,7 +120,7 @@ async fn test_cancel_and_confirm_the_location_entry(cx: &mut TestAppContext) {
     })
     .unwrap();
     panel.read_with(cx, |panel, cx| {
-        assert!(panel.path_edit.is_some(), "the editor is open");
+        assert!(panel.path_editing, "the editor is open");
         assert!(
             !panel.path_field.read(cx).content().is_empty(),
             "the entry is prefilled with the current path"
@@ -133,7 +133,7 @@ async fn test_cancel_and_confirm_the_location_entry(cx: &mut TestAppContext) {
     })
     .unwrap();
     panel.read_with(cx, |panel, _cx| {
-        assert!(panel.path_edit.is_none(), "CancelInput closes the editor");
+        assert!(!panel.path_editing, "CancelInput closes the editor");
     });
 
     // `ConfirmInput` goes through `confirm_path_edit`; an empty entry keeps the
@@ -149,10 +149,7 @@ async fn test_cancel_and_confirm_the_location_entry(cx: &mut TestAppContext) {
     })
     .unwrap();
     panel.read_with(cx, |panel, _cx| {
-        assert!(
-            panel.path_edit.is_some(),
-            "an empty path keeps the editor open"
-        );
+        assert!(panel.path_editing, "an empty path keeps the editor open");
     });
 }
 

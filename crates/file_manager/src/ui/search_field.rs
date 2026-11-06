@@ -87,12 +87,6 @@ impl SearchField {
         &self.content
     }
 
-    /// The focus handle, so the panel can focus the field when the search
-    /// opens.
-    pub(crate) fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.focus_handle.clone()
-    }
-
     /// Replaces the text without notifying the panel (used when the search
     /// opens or closes).
     pub(crate) fn set_text(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {

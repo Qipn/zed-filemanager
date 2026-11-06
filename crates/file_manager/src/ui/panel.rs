@@ -97,9 +97,9 @@ pub struct FileManagerPanel {
     pub(crate) undo_manager: UndoManager,
     pub(crate) show_hidden: bool,
     pub(crate) sort_mode: SortMode,
-    /// Active path-bar edit: the mode flag and a mirror of the text the entry
-    /// holds. `Some` means editing.
-    pub(crate) path_edit: Option<String>,
+    /// Whether the location slot is in path-edit mode. The text itself lives in
+    /// `path_field`; this is only the mode flag.
+    pub(crate) path_editing: bool,
     /// The entry currently being hovered by a drag, for drop highlight.
     pub(crate) drag_target: Option<PathBuf>,
     /// A transfer waiting for conflict resolution.
@@ -194,7 +194,7 @@ impl FileManagerPanel {
             undo_manager: UndoManager::new(),
             show_hidden: false,
             sort_mode: SortMode::default(),
-            path_edit: None,
+            path_editing: false,
             drag_target: None,
             pending_transfer: None,
             view_mode: ViewMode::Details,
@@ -283,15 +283,14 @@ impl FileManagerPanel {
             )
             .detach();
 
-            // The editable location entry, with the same event shape.
+            // The editable location entry, with the same event shape. The text
+            // lives in the field, so `Change` needs no work here.
             let path_field = panel.path_field.clone();
             cx.subscribe_in(
                 &path_field,
                 window,
-                |this, field, event: &SearchFieldEvent, window, cx| match event {
-                    SearchFieldEvent::Change => {
-                        this.path_edit = Some(field.read(cx).content().to_string());
-                    }
+                |this, _field, event: &SearchFieldEvent, window, cx| match event {
+                    SearchFieldEvent::Change => {}
                     SearchFieldEvent::Submit => this.confirm_path_edit(window, cx),
                     SearchFieldEvent::Dismiss => this.cancel_path_edit(window, cx),
                 },

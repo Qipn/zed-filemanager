@@ -213,7 +213,7 @@ impl FileManagerPanel {
         // While the location entry is open it owns the keys (it is focused and
         // stops propagation); the panel only keeps Escape, so the mode can still
         // be left when the focus sits on the list.
-        if self.path_edit.is_some() {
+        if self.path_editing {
             if event.keystroke.key == "escape" {
                 self.cancel_path_edit(window, cx);
                 cx.stop_propagation();

@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use fs::{CreateOptions, RemoveOptions, RenameOptions};
-use gpui::{App, Context, Entity, PromptLevel, Window};
+use gpui::{App, Context, Entity, Focusable, PromptLevel, Window};
 use util::ResultExt;
 
 use super::FileManagerPanel;
@@ -307,6 +307,16 @@ impl FileManagerPanel {
             return;
         };
         self.start_rename(entry.path, entry.is_dir, window, cx);
+    }
+
+    /// Whether `path` is the entry currently being renamed.
+    ///
+    /// The details and grid views render the inline editor in place of the
+    /// name when this is true.
+    pub(crate) fn is_renaming(&self, path: &std::path::Path) -> bool {
+        self.rename_state
+            .as_ref()
+            .is_some_and(|state| state.source == path)
     }
 
     /// Starts the inline rename of `path`.

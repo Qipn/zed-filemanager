@@ -12,7 +12,10 @@
 //! toolbar: they live in the context menu and on the keyboard. The panel does
 //! the same, so the old OpenXplorer command bar is gone.
 
-use gpui::{AnyElement, Context, IntoElement, MouseButton, MouseDownEvent, Window, div, px};
+use gpui::{
+    AnyElement, Context, Focusable, IntoElement, MouseButton, MouseDownEvent, Window, div, px,
+};
+use std::path::PathBuf;
 use theme::ActiveTheme;
 use ui::{Color, Icon, IconButton, IconName, IconSize, Label, LabelSize, Tooltip, prelude::*};
 
@@ -158,7 +161,8 @@ fn render_new_controls(this: &FileManagerPanel, cx: &mut Context<FileManagerPane
 /// GNOME Files (Nautilus) uses a single field for three modes instead of an
 /// address box plus a separate search box: the breadcrumb path, the editable
 /// location, and the search query. The panel does the same: the slot shows the
-/// search while `search_query` is set, the editable path while `path_edit` is
+/// search while `search_query` is set, the editable path while `path_editing`
+/// is on, and the breadcrumbs otherwise.
 /// set, and the breadcrumbs otherwise.
 pub(super) fn render_location_slot(
     this: &FileManagerPanel,
@@ -267,7 +271,7 @@ pub(super) fn render_address_bar(
     let _ = window;
     let palette = palette(cx.theme());
 
-    if this.path_edit.is_some() {
+    if this.path_editing {
         return div()
             .id("file-manager-address-edit")
             .flex()
@@ -295,6 +299,12 @@ pub(super) fn render_address_bar(
     }
 
     let segments = this.breadcrumb_targets();
+    // The root is drawn as the leading button, not as a `/` crumb: the
+    // separators below are then a plain join (no `//` special case) and the icon
+    // becomes the "jump to /" target, the way Nautilus renders its root button.
+    let root = segments.first().cloned();
+    let rest: &[(PathBuf, SharedString)] = segments.get(1..).unwrap_or(&[]);
+
     // Keep the crumbs that matter in a narrow dock: the earliest ones are
     // dropped in favour of the last few (the current folder and its parents),
     // otherwise every label is squeezed and only the tail stays clickable.
@@ -306,8 +316,8 @@ pub(super) fn render_address_bar(
     } else {
         2
     };
-    let skipped = segments.len().saturating_sub(max_segments);
-    let visible = &segments[skipped..];
+    let skipped = rest.len().saturating_sub(max_segments);
+    let visible = &rest[skipped..];
 
     // The crumbs must not shrink: a squeezed label is both unreadable and hard
     // to hit.
@@ -316,6 +326,15 @@ pub(super) fn render_address_bar(
         .flex_1()
         .min_w(px(0.))
         .overflow_hidden();
+
+    if visible.is_empty() {
+        // The current folder *is* the root, so there is no segment to draw.
+        crumbs = crumbs.child(
+            Label::new("/")
+                .size(LabelSize::Small)
+                .color(Color::Custom(palette.text)),
+        );
+    }
 
     if skipped > 0 {
         crumbs = crumbs.child(
@@ -328,11 +347,9 @@ pub(super) fn render_address_bar(
     for (offset, (target, name)) in visible.iter().enumerate() {
         let index = skipped + offset;
         let is_last = offset + 1 == visible.len();
-        // The root crumb is labelled `/` itself, so a separator after it would
-        // render `//home`. Only insert the slash when the previous crumb does
-        // not already end the path.
-        let previous_is_root = offset > 0 && visible[offset - 1].1.as_ref() == "/";
-        if (offset > 0 && !previous_is_root) || (offset == 0 && skipped > 0) {
+        // A plain join: the root is no longer one of the crumbs, so the slash is
+        // inserted between every pair and after the ellipsis.
+        if offset > 0 || skipped > 0 {
             crumbs = crumbs.child(
                 Label::new("/")
                     .size(LabelSize::Small)
@@ -434,11 +451,38 @@ pub(super) fn render_address_bar(
                 this.begin_path_edit(window, cx);
             }),
         )
-        .child(
-            Icon::new(IconName::Folder)
-                .size(IconSize::Small)
-                .color(Color::Custom(palette.muted)),
-        )
+        .child({
+            // The leading folder is the root button: clicking it jumps to `/`.
+            // Nautilus draws a drive icon there instead of a `/` crumb.
+            let root_target = root.as_ref().map(|(path, _)| path.clone());
+            let root_label = root
+                .as_ref()
+                .map(|(path, _)| path.display().to_string())
+                .unwrap_or_default();
+            h_flex()
+                .id("file-manager-crumb-root")
+                .h(px(26.))
+                .px(px(6.))
+                .flex_shrink_0()
+                .rounded_xs()
+                .occlude()
+                .hover(|style| style.bg(palette.hover))
+                .tooltip(Tooltip::text(root_label))
+                .child(
+                    Icon::new(IconName::Folder)
+                        .size(IconSize::Small)
+                        .color(Color::Custom(palette.muted)),
+                )
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
+                        if let Some(target) = root_target.clone() {
+                            this.navigate_to(target, window, cx);
+                        }
+                    }),
+                )
+        })
         .child(crumbs)
         .into_any_element()
 }
