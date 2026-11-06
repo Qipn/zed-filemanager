@@ -67,7 +67,12 @@ pub(crate) fn render_details_pane(
                     .flex_col()
                     .items_center()
                     .justify_center()
-                    .child(crate::ui::views::entry_icon(&entry, IconSize::XLarge, cx)),
+                    .child(crate::ui::views::entry_icon(
+                        &entry,
+                        false,
+                        IconSize::XLarge,
+                        cx,
+                    )),
             )
             // The name and the kind of the entry.
             .child(

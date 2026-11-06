@@ -54,6 +54,9 @@ pub(super) fn render_tile(
     let drag_name = entry.name.clone();
     // The tile grows with the icon, like OpenXplorer's grid view.
     let icon_size = this.icon_size();
+    // The grid lays out the same rows the details view does, so a folder
+    // expanded in place shows its children here too; the icon follows along.
+    let expanded = this.is_entry_expanded(&entry.path);
     let tile_width = metrics::TILE_WIDTH.max(icon_size + 79.);
     let tile_height = metrics::TILE_HEIGHT + (icon_size - metrics::TILE_ICON);
 
@@ -87,6 +90,7 @@ pub(super) fn render_tile(
                 .items_center()
                 .child(super::entry_icon(
                     &entry,
+                    expanded,
                     IconSize::Custom(rems_from_px(icon_size)),
                     cx,
                 )),

@@ -164,7 +164,7 @@ pub(super) fn render_details_row(
                                 )
                         }),
                 )
-                .child(super::entry_icon(&entry, IconSize::Small, cx))
+                .child(super::entry_icon(&entry, is_expanded, IconSize::Small, cx))
                 .child({
                     // While this entry is being renamed the inline editor takes
                     // the place of its name (`project_panel` renders its
