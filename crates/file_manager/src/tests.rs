@@ -5,6 +5,7 @@
 //! tree, details view, details pane, status bar) is exercised without opening
 //! the editor.
 
+use fs::Fs as _;
 use gpui::{AppContext, TestAppContext, WindowOptions};
 use project::Project;
 use settings::SettingsStore;
@@ -383,6 +384,60 @@ async fn test_typing_while_the_panel_holds_the_focus(cx: &mut TestAppContext) {
             "the panel forwards typed characters to the search entry"
         );
     });
+}
+
+/// Creating an entry opens the inline rename and the typed name is committed.
+///
+/// Regression test for "new file/folder naming does not work": the entry is
+/// created before the row exists, so the editor has to keep working while the
+/// panel holds the focus, and Enter must commit the typed name.
+#[gpui::test]
+async fn test_creating_a_folder_starts_and_commits_a_rename(cx: &mut TestAppContext) {
+    init_globals(cx);
+
+    let fs = fs::FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree("/home/alice", serde_json::json!({ "projects": {} }))
+        .await;
+    let project = Project::test(fs.clone(), ["/home/alice".as_ref()], cx).await;
+
+    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        FileManagerPanel::new(workspace, window, cx)
+    });
+
+    let window = cx.update(|_window, cx| {
+        cx.open_window(WindowOptions::default(), |_window, _cx| panel.clone())
+            .expect("failed to open the test window")
+    });
+    let window = window.into();
+
+    cx.update_window(window, |_, window, cx| {
+        panel.update(cx, |panel, cx| panel.create_folder(window, cx));
+    })
+    .unwrap();
+    cx.background_executor.run_until_parked();
+
+    // The suggested name is in the editor, with the whole name selected.
+    panel.read_with(cx, |panel, cx| {
+        assert_eq!(
+            panel.rename_state.as_deref(),
+            Some(std::path::Path::new("/home/alice/New Folder")),
+            "creating a folder starts renaming it"
+        );
+        assert_eq!(panel.rename_field.read(cx).content(), "New Folder");
+    });
+
+    // Type over the selection and commit with Enter.
+    TestAppContext::simulate_keystrokes(&mut *cx, window, "d e m o enter");
+    cx.background_executor.run_until_parked();
+
+    panel.read_with(cx, |panel, _cx| {
+        assert!(panel.rename_state.is_none(), "Enter closes the editor");
+    });
+    assert!(
+        fs.is_dir(std::path::Path::new("/home/alice/demo")).await,
+        "the typed name was committed"
+    );
 }
 
 /// The icon grid view and the details pane render as well.

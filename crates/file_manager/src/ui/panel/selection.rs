@@ -255,9 +255,32 @@ impl FileManagerPanel {
             cx.stop_propagation();
             return;
         }
-        // While an inline rename is active the rename field owns the keys (it
-        // is focused, and stops propagation), so nothing is handled here.
+        // While an inline rename is active the rename field usually owns the
+        // keys, but the focus can sit on the panel instead (the row is created
+        // asynchronously, or the user clicked the list). Forward the keys so the
+        // editor keeps working.
         if self.rename_state.is_some() {
+            match event.keystroke.key.as_str() {
+                "escape" => self.cancel_rename(window, cx),
+                "backspace" => self
+                    .rename_field
+                    .update(cx, |field, cx| field.delete_backward(window, cx)),
+                key => {
+                    let printable = !modifiers.control && !modifiers.alt && !modifiers.platform;
+                    let text = event
+                        .keystroke
+                        .key_char
+                        .as_deref()
+                        .filter(|text| !text.is_empty());
+                    if let (true, Some(text)) = (printable, text) {
+                        self.rename_field
+                            .update(cx, |field, cx| field.insert_text(text, window, cx));
+                    } else {
+                        let _ = key;
+                    }
+                }
+            }
+            cx.stop_propagation();
             return;
         }
 
