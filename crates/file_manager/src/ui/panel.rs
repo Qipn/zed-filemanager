@@ -4,12 +4,16 @@
 
 mod bookmarks;
 mod file_ops;
+mod history;
 mod layout;
+mod location;
 mod menus;
 mod navigation;
+mod rename;
 mod search;
 mod selection;
 mod sidebar_state;
+mod sort;
 mod transfer;
 mod view_state;
 

@@ -35,16 +35,28 @@ impl FileManagerPanel {
 
     /// Makes sure the folder tree has a root and shows its children.
     ///
-    /// Roots the tree at the home directory while the current folder lives
-    /// inside it, and at the filesystem root otherwise.
+    /// The root is **sticky**: it only changes when the current folder leaves
+    /// it. Starting at `/`, browsing anywhere on the filesystem keeps the tree
+    /// rooted at `/`; starting inside the home directory keeps it rooted there
+    /// until the user jumps outside.
     ///
-    /// The root deliberately does **not** follow the current folder: re-rooting
-    /// on every navigation made the tree jump (clicking `/bin` from `/` rooted
-    /// the tree at `/bin`, which has no sub-directories on NixOS because it is a
-    /// symlink into the store, so the tree looked like it had vanished).
+    /// This matters because re-rooting rebuilds the tree: navigating to
+    /// `/home/qipn` while the tree was rooted at `/` used to switch the root to
+    /// the home directory, which wiped the expanded nodes and made the click
+    /// that caused it look like it had been swallowed ("clicking `qipn` needs
+    /// two clicks").
     pub(crate) fn refresh_tree(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let home = home_dir();
         let current = self.current_dir.clone();
+
+        // Keep the existing root while the current folder is still inside it.
+        if let (Some(root), Some(current)) = (&self.tree_root, &current) {
+            if current.starts_with(root) {
+                self.sync_tree_expansion();
+                return;
+            }
+        }
+
         let root = match (&home, &current) {
             (Some(home), Some(current)) if current.starts_with(home) => home.clone(),
             // Outside the home directory the tree spans the whole filesystem.

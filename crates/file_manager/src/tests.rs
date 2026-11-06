@@ -319,6 +319,24 @@ async fn test_tree_root_does_not_follow_the_current_directory(cx: &mut TestAppCo
             "browsing /bin keeps the tree rooted at /"
         );
     });
+
+    // The root is sticky: going into the home directory (which is inside `/`)
+    // must not rebuild the tree either — that rebuild is what made clicking
+    // `qipn` in the tree look like it needed two clicks.
+    cx.update_window(window, |_, window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.navigate_to(std::path::PathBuf::from("/home/alice"), window, cx);
+        });
+    })
+    .unwrap();
+    cx.background_executor.run_until_parked();
+    panel.read_with(cx, |panel, _cx| {
+        assert_eq!(
+            panel.tree_root.as_deref(),
+            Some(std::path::Path::new("/")),
+            "entering home keeps the / root while it still contains us"
+        );
+    });
 }
 
 /// The icon grid view and the details pane render as well.

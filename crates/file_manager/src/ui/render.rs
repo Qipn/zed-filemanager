@@ -17,12 +17,13 @@
 
 mod body;
 mod conflict_banner;
-mod navigation;
+mod header;
+mod location;
 mod status_bar;
 
 use body::render_body;
 use conflict_banner::render_conflict_banner;
-use navigation::render_header_bar;
+use header::render_header_bar;
 use status_bar::render_status_bar;
 
 use gpui::{Context, IntoElement, KeyDownEvent, MouseButton, Window, canvas};

@@ -1,19 +1,20 @@
-//! File operations: creating entries, renaming, deleting and the undo history
-//! hooks that wrap them.
+//! File operations: creating and deleting entries, plus the clipboard
+//! (copy/cut/paste).
 //!
+//! Renaming lives in `panel/rename.rs` and undo/redo in `panel/history.rs`.
 //! Every operation records its effect on `UndoManager` and then reloads the
 //! directory, so the view and the history never disagree.
 
 use std::path::PathBuf;
 
 use anyhow::Result;
-use fs::{CreateOptions, RemoveOptions, RenameOptions};
+use fs::{CreateOptions, RemoveOptions};
 use gpui::{App, Context, Entity, Focusable, PromptLevel, Window};
 use util::ResultExt;
 
 use super::FileManagerPanel;
 use crate::model::clipboard::Clipboard;
-use crate::model::undo::{Change, HistoryStep};
+use crate::model::undo::Change;
 use crate::ui::search_field::SearchField;
 
 impl FileManagerPanel {
@@ -251,209 +252,6 @@ impl FileManagerPanel {
             })
             .log_err();
         }));
-    }
-
-    pub(crate) fn undo_last(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.run_history_step(window, cx, HistoryStep::Undo);
-    }
-
-    pub(crate) fn redo_last(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.run_history_step(window, cx, HistoryStep::Redo);
-    }
-
-    /// Executes the inverse of the newest change on the given stack, then
-    /// records the resulting state on the opposite stack.
-    fn run_history_step(&mut self, window: &mut Window, cx: &mut Context<Self>, step: HistoryStep) {
-        let can_run = match step {
-            HistoryStep::Undo => self.undo_manager.can_undo(),
-            HistoryStep::Redo => self.undo_manager.can_redo(),
-        };
-        if !can_run {
-            return;
-        }
-        let fs = self.fs.clone();
-        self._operation_task = Some(cx.spawn_in(window, async move |this, cx| {
-            let popped = this
-                .update(cx, |this, _cx| match step {
-                    HistoryStep::Undo => this.undo_manager.pop_undo(),
-                    HistoryStep::Redo => this.undo_manager.pop_redo(),
-                })
-                .ok()
-                .flatten();
-            let Some(change) = popped else {
-                return;
-            };
-
-            let result = crate::model::undo::execute_operation(&*fs, change.to_inverse()).await;
-
-            this.update_in(cx, |this, window, cx| {
-                match result {
-                    Ok(new_change) => {
-                        this.undo_manager.commit_inverse(step, new_change);
-                        this.error = None;
-                    }
-                    Err(error) => {
-                        this.undo_manager.restore_step(step, change);
-                        this.error = Some(format!("{error}").into());
-                    }
-                }
-                this.load_directory(window, cx);
-            })
-            .log_err();
-        }));
-    }
-    pub(crate) fn rename_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(entry) = self.selected_entry() else {
-            return;
-        };
-        self.start_rename(entry.path, entry.is_dir, window, cx);
-    }
-
-    /// Whether `path` is the entry currently being renamed.
-    ///
-    /// The details and grid views render the inline editor in place of the
-    /// name when this is true.
-    pub(crate) fn is_renaming(&self, path: &std::path::Path) -> bool {
-        self.rename_state.as_deref() == Some(path)
-    }
-
-    /// Starts the inline rename of `path`.
-    ///
-    /// Like `project_panel::rename_impl`, the field starts with the current
-    /// name selected — the whole name for a directory, only the stem for a file
-    /// ("Only files keep their extension unselected for quick renames").
-    pub(crate) fn start_rename(
-        &mut self,
-        path: PathBuf,
-        is_dir: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(name) = path
-            .file_name()
-            .map(|name| name.to_string_lossy().to_string())
-        else {
-            return;
-        };
-        let selection = if is_dir {
-            0..name.len()
-        } else {
-            let stem_len = path
-                .file_stem()
-                .map(|stem| stem.to_string_lossy().len())
-                .unwrap_or(name.len());
-            0..stem_len
-        };
-
-        self.rename_state = Some(path);
-        self.rename_field.update(cx, |field, cx| {
-            field.set_text_with_selection(&name, selection, window, cx);
-        });
-        self.focus_rename_field(window, cx);
-        cx.notify();
-    }
-
-    /// Focuses the inline rename editor, if a rename is running.
-    pub(crate) fn focus_rename_field(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.rename_state.is_none() {
-            return;
-        }
-        let focus = self.rename_field.read(cx).focus_handle(cx);
-        window.focus(&focus, cx);
-    }
-
-    /// Commits the inline rename.
-    ///
-    /// The checks follow `project_panel::confirm_edit` / `populate_validation_error`:
-    /// an empty name, a path separator, leading or trailing whitespace and an
-    /// existing target are refused — and the editor stays open so the user can
-    /// fix the name, instead of failing silently.
-    pub(crate) fn confirm_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(source) = self.rename_state.clone() else {
-            return;
-        };
-        let Some(directory) = source.parent().map(|parent| parent.to_path_buf()) else {
-            return;
-        };
-
-        // `project_panel::confirm_edit` strips trailing dots on Windows, where
-        // the file system ignores them.
-        let mut new_name = self.rename_field.read(cx).content().to_string();
-        if cfg!(windows) {
-            while let Some(stripped) = new_name.strip_suffix('.') {
-                new_name = stripped.to_string();
-            }
-        }
-
-        if new_name.is_empty() {
-            self.error = Some("A file or folder name cannot be empty.".into());
-            cx.notify();
-            return;
-        }
-        if new_name.contains('/') || new_name.contains('\0') {
-            self.error = Some("A file or folder name cannot contain “/”.".into());
-            cx.notify();
-            return;
-        }
-        if new_name.trim() != new_name {
-            self.error = Some("A file or folder name cannot start or end with a space.".into());
-            cx.notify();
-            return;
-        }
-
-        let target = directory.join(&new_name);
-        if target == source {
-            // Renaming to the same name is a no-op.
-            self.rename_state = None;
-            window.focus(&self.focus_handle, cx);
-            cx.notify();
-            return;
-        }
-        if target.exists() {
-            self.error = Some(format!("“{new_name}” already exists here.").into());
-            cx.notify();
-            return;
-        }
-
-        let fs = self.fs.clone();
-        self._operation_task = Some(cx.spawn_in(window, async move |this, cx| {
-            let result = fs
-                .rename(
-                    &source,
-                    &target,
-                    RenameOptions {
-                        overwrite: false,
-                        // Fail instead of silently doing nothing when another
-                        // process created the target in the meantime.
-                        ignore_if_exists: false,
-                        create_parents: false,
-                    },
-                )
-                .await;
-            this.update_in(cx, |this, window, cx| match result {
-                Ok(()) => {
-                    this.error = None;
-                    this.rename_state = None;
-                    this.selected.clear();
-                    this.selected.push(target.clone());
-                    this.load_directory(window, cx);
-                    window.focus(&this.focus_handle, cx);
-                }
-                Err(error) => {
-                    // Keep the editor open so the name can be fixed.
-                    this.error = Some(format!("{error}").into());
-                    cx.notify();
-                }
-            })
-            .log_err();
-        }));
-    }
-
-    pub(crate) fn cancel_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.rename_state.take().is_some() {
-            window.focus(&self.focus_handle, cx);
-            cx.notify();
-        }
     }
 
     pub(crate) fn paste_clipboard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
