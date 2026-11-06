@@ -79,15 +79,18 @@ impl FileManagerPanel {
         self.load_tree_children(&root, 0, window, cx);
     }
 
-    /// Expands the tree down to the current directory and scrolls it into view.
+    /// Makes the tree mirror the current directory: expands the path to it and
+    /// folds every branch that is not on that path.
     ///
-    /// This is the "scroll to reveal" every file manager does: jumping to a deep
-    /// path (breadcrumb, sidebar place, search hit, history) is useless if the
-    /// tree still shows a collapsed branch. The walk is lazy — every level is
-    /// read on demand, one directory at a time — and it only ever *expands*:
-    /// branches the user collapsed elsewhere are left alone, and a manual
-    /// collapse of an ancestor is respected until the current directory changes
-    /// again (`last_revealed`).
+    /// This is the "navigate to the folder" behaviour: opening a folder in the
+    /// view highlights it in the tree and expanding/collapsing follows the
+    /// path, so going back up folds the branch again instead of leaving a
+    /// growing set of expanded folders behind. Branches that were expanded by
+    /// hand are folded too — the tree is a mirror of the current location, not a
+    /// history of what was opened.
+    ///
+    /// The walk is lazy: every level is read on demand, one directory at a time,
+    /// and `last_revealed` keeps it from running on every render.
     pub(crate) fn reveal_in_tree(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(root) = self.tree_root.clone() else {
             return;
@@ -102,13 +105,19 @@ impl FileManagerPanel {
         // `chain` is `[root, …, current]`; the current directory itself is not
         // expanded (that stays the chevron's job), so only the ancestors are
         // targets. Depth matches the chain index: the root's children are at 1.
-        let targets: Vec<(PathBuf, usize)> = tree::ancestor_chain(&current, &root)
-            .into_iter()
+        let chain = tree::ancestor_chain(&current, &root);
+        let targets: Vec<(PathBuf, usize)> = chain
+            .iter()
             .enumerate()
             .skip(1)
-            .filter(|(_, path)| path != &current)
-            .map(|(depth, path)| (path, depth + 1))
+            .filter(|(_, path)| *path != &current)
+            .map(|(depth, path)| (path.clone(), depth + 1))
             .collect();
+
+        // Fold everything that is off the path first; this needs no I/O, so the
+        // tree already looks right before the lazy expansion finishes.
+        let keep: Vec<PathBuf> = targets.iter().map(|(path, _)| path.clone()).collect();
+        tree::collapse_all_except(&mut self.tree_nodes, &keep);
 
         if targets.is_empty() {
             // The current directory is a direct child of the root; nothing to

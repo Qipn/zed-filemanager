@@ -511,6 +511,81 @@ async fn test_tree_reveals_the_current_directory(cx: &mut TestAppContext) {
     });
 }
 
+/// Navigating folds the branches that are no longer on the current path.
+///
+/// The tree mirrors the current location: entering a folder expands its chain,
+/// going back up folds it again instead of leaving every branch the user (or a
+/// previous jump) opened behind.
+#[gpui::test]
+async fn test_tree_folds_branches_off_the_current_path(cx: &mut TestAppContext) {
+    init_globals(cx);
+
+    let fs = fs::FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/home/alice",
+        serde_json::json!({
+            "projects": { "demo": {} },
+            "other": { "nested": {} },
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), ["/home/alice".as_ref()], cx).await;
+
+    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        FileManagerPanel::new(workspace, window, cx)
+    });
+
+    let window = cx.update(|_window, cx| {
+        cx.open_window(WindowOptions::default(), |_window, _cx| panel.clone())
+            .expect("failed to open the test window")
+    });
+    let window = window.into();
+    cx.background_executor.run_until_parked();
+
+    // Open an unrelated branch by hand, the way the chevron does.
+    cx.update_window(window, |_, _window, cx| {
+        panel.update(cx, |panel, _cx| {
+            if let Some(node) = crate::model::tree::TreeNode::find_mut(
+                &mut panel.tree_nodes,
+                std::path::Path::new("/home/alice/other"),
+            ) {
+                node.expanded = true;
+            }
+        });
+    })
+    .unwrap();
+
+    // Now open a folder on the other branch.
+    cx.update_window(window, |_, window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.navigate_to(std::path::PathBuf::from("/home/alice/projects"), window, cx);
+        });
+    })
+    .unwrap();
+    cx.background_executor.run_until_parked();
+
+    panel.read_with(cx, |panel, _cx| {
+        let rows = crate::model::tree::visible_rows(&panel.tree_nodes);
+        let expanded: Vec<&std::path::Path> = rows
+            .iter()
+            .filter(|node| node.expanded)
+            .map(|node| node.path.as_path())
+            .collect();
+
+        assert!(
+            !expanded.contains(&std::path::Path::new("/home/alice/other")),
+            "the branch we left is folded again, rows: {:?}",
+            expanded
+        );
+        assert!(
+            !expanded.contains(&std::path::Path::new("/home/alice/projects")),
+            "the current directory is not expanded, rows: {:?}",
+            expanded
+        );
+    });
+}
+
 /// The icon grid view and the details pane render as well.
 #[gpui::test]
 async fn test_render_grid_and_details_pane(cx: &mut TestAppContext) {

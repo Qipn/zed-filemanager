@@ -124,6 +124,21 @@ fn collect_rows<'a>(nodes: &'a [TreeNode], rows: &mut Vec<&'a TreeNode>) {
     }
 }
 
+/// Collapses every node whose path is not listed in `keep`.
+///
+/// Used to make the tree mirror the current path: the ancestors of the open
+/// folder stay expanded, every other branch folds back. Children stay cached, so
+/// re-expanding a branch is instant.
+pub(crate) fn collapse_all_except(nodes: &mut [TreeNode], keep: &[PathBuf]) {
+    for node in nodes {
+        let is_on_path = keep.iter().any(|path| path == &node.path);
+        if !is_on_path {
+            node.expanded = false;
+        }
+        collapse_all_except(&mut node.children, keep);
+    }
+}
+
 /// The chain of ancestors of `path`, from the root down to the directory itself.
 ///
 /// Used to auto-expand the tree down to the directory that is currently open.
