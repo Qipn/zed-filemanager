@@ -1,10 +1,12 @@
 //! The body of the panel: the sidebar, the resizer, the folder view and the
 //! details pane.
 
-use gpui::{AnyElement, Context, IntoElement, MouseButton, MouseDownEvent, Window, div, px};
+use gpui::{
+    AnyElement, Context, IntoElement, MouseButton, MouseDownEvent, Window, deferred, div, px,
+};
 use ui::prelude::*;
 
-use crate::ui::ox_theme::{metrics, palette};
+use crate::ui::ox_theme::metrics;
 use crate::ui::panel::FileManagerPanel;
 use crate::ui::views::render_view;
 /// The body: the sidebar and the folder view.
@@ -13,8 +15,6 @@ pub(super) fn render_body(
     window: &mut Window,
     cx: &mut Context<FileManagerPanel>,
 ) -> AnyElement {
-    let palette = palette(cx.theme());
-
     let content = v_flex()
         .id("file-manager-content")
         .flex_1()
@@ -101,49 +101,48 @@ pub(super) fn render_body(
         .items_stretch()
         .flex_1()
         .min_h(px(0.))
-        .child(crate::ui::sidebar::render_sidebar(this, window, cx))
-        // The resizer between the sidebar and the content. It starts a drag
-        // instead of tracking the mouse itself, so GPUI ends the resize when
-        // the button is released (see Zed's dock resize handle). The visible
-        // line is 1 px and turns accent on hover; the whole 6 px strip is the
-        // hit area.
+        // The sidebar and its resize handle. The handle is absolutely positioned
+        // and straddles the 1 px border, so it does not take layout width and
+        // stays invisible at rest — exactly like Zed's dock
+        // (`crates/workspace/src/dock.rs`). GPUI owns the drag, so releasing the
+        // mouse always ends the resize.
         .child(
             div()
-                .id("file-manager-sidebar-resizer")
-                .w(px(metrics::SIDEBAR_RESIZER))
+                .relative()
                 .h_full()
                 .flex_shrink_0()
-                .flex()
-                .justify_center()
-                .cursor(gpui::CursorStyle::ResizeLeftRight)
-                .on_drag(crate::ui::panel::SidebarResizeDrag, |_, _, _, cx| {
-                    cx.stop_propagation();
-                    cx.new(|_| crate::ui::panel::SidebarResizeDrag)
-                })
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|_, _: &MouseDownEvent, _, cx| {
-                        cx.stop_propagation();
-                    }),
-                )
-                // Double click restores OpenXplorer's default width.
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(|this, event: &gpui::MouseUpEvent, _, cx| {
-                        if event.click_count == 2 {
-                            this.reset_sidebar_width(cx);
-                            cx.stop_propagation();
-                        }
-                    }),
-                )
-                .child(
+                .child(crate::ui::sidebar::render_sidebar(this, window, cx))
+                .child(deferred(
                     div()
-                        .w(px(1.))
+                        .id("file-manager-sidebar-resizer")
+                        .absolute()
+                        .right(px(-metrics::SIDEBAR_RESIZER / 2.))
+                        .top(px(0.))
                         .h_full()
-                        .bg(palette.divider)
-                        .hover(|style| style.bg(palette.accent)),
-                )
-                .occlude(),
+                        .w(px(metrics::SIDEBAR_RESIZER))
+                        .cursor(gpui::CursorStyle::ResizeLeftRight)
+                        .on_drag(crate::ui::panel::SidebarResizeDrag, |_, _, _, cx| {
+                            cx.stop_propagation();
+                            cx.new(|_| crate::ui::panel::SidebarResizeDrag)
+                        })
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|_, _: &MouseDownEvent, _, cx| {
+                                cx.stop_propagation();
+                            }),
+                        )
+                        // Double click restores OpenXplorer's default width.
+                        .on_mouse_up(
+                            MouseButton::Left,
+                            cx.listener(|this, event: &gpui::MouseUpEvent, _, cx| {
+                                if event.click_count == 2 {
+                                    this.reset_sidebar_width(cx);
+                                    cx.stop_propagation();
+                                }
+                            }),
+                        )
+                        .occlude(),
+                )),
         )
         .child(content)
         .when(this.is_details_pane_shown(), |body| {
