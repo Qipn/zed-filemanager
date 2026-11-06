@@ -77,6 +77,16 @@ pub(super) fn render_search_field(
                 .color(Color::Custom(palette.muted)),
         )
         .child(this.search_field.clone())
+        .child(
+            // The query filters (scope / kind / date / contents), like the
+            // filter button of GNOME's query editor.
+            IconButton::new("file-manager-search-filters", IconName::Settings)
+                .icon_size(IconSize::XSmall)
+                .tooltip(Tooltip::text("Search filters"))
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.deploy_search_filter_menu(window.mouse_position(), window, cx);
+                })),
+        )
         .when(has_text, |bar| {
             bar.child(
                 IconButton::new("file-manager-search-clear", IconName::Close)

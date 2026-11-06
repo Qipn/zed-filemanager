@@ -766,6 +766,88 @@ async fn test_render_grid_and_details_pane(cx: &mut TestAppContext) {
     });
 }
 
+/// The search filters: scope, file kind and content matching.
+#[gpui::test]
+async fn test_search_filters(cx: &mut TestAppContext) {
+    use crate::model::entries::SortMode;
+    use crate::model::search::{SearchKind, SearchOptions, search_directory};
+
+    let fake = fs::FakeFs::new(cx.background_executor.clone());
+    fake.insert_tree(
+        "/home/alice",
+        serde_json::json!({
+            "alpha.txt": "this file contains a needle",
+            "photo.png": "png",
+            "sub": { "beta.txt": "nothing here", "gamma.rs": "needle again" },
+        }),
+    )
+    .await;
+    let fs: std::sync::Arc<dyn fs::Fs> = fake.clone();
+
+    let search = |query: &str, options: &SearchOptions| {
+        let fs = fs.clone();
+        let query = query.to_string();
+        let options = options.clone();
+        async move {
+            search_directory(
+                fs,
+                std::path::PathBuf::from("/home/alice"),
+                query,
+                false,
+                SortMode::default(),
+                &options,
+            )
+            .await
+            .expect("search")
+            .entries
+            .into_iter()
+            .map(|entry| entry.name.to_string())
+            .collect::<Vec<_>>()
+        }
+    };
+
+    // Recursive by default: a hit in a subfolder is found.
+    let recursive = search("beta", &SearchOptions::default()).await;
+    assert_eq!(recursive, vec!["beta.txt".to_string()]);
+
+    // Limiting the scope to the open folder hides it.
+    let flat = search(
+        "beta",
+        &SearchOptions {
+            recursive: false,
+            ..SearchOptions::default()
+        },
+    )
+    .await;
+    assert!(flat.is_empty(), "got {flat:?}");
+
+    // Only images. Folders are kept whatever the kind filter says: they are how
+    // the reached files are navigated to.
+    let images = search(
+        "",
+        &SearchOptions {
+            kind: SearchKind::Images,
+            ..SearchOptions::default()
+        },
+    )
+    .await;
+    assert_eq!(images, vec!["sub".to_string(), "photo.png".to_string()]);
+
+    // Matching the file contents finds the two files whose text contains it.
+    let contents = search(
+        "needle",
+        &SearchOptions {
+            contents: true,
+            ..SearchOptions::default()
+        },
+    )
+    .await;
+    assert_eq!(
+        contents,
+        vec!["alpha.txt".to_string(), "gamma.rs".to_string()]
+    );
+}
+
 /// A name typed in the conflict prompt renames the incoming entry and leaves the
 /// existing one alone; a typed name that also collides still gets a unique name.
 #[gpui::test]

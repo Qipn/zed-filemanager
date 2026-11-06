@@ -89,6 +89,7 @@ impl FileManagerPanel {
         let fs = self.fs.clone();
         let show_hidden = self.show_hidden;
         let sort_mode = self.sort_mode;
+        let options = self.search_options.clone();
 
         self.search_running = true;
         self.selected.clear();
@@ -103,9 +104,15 @@ impl FileManagerPanel {
             ) {
                 return;
             }
-            let result =
-                crate::model::search::search_directory(fs, root, query, show_hidden, sort_mode)
-                    .await;
+            let result = crate::model::search::search_directory(
+                fs,
+                root,
+                query,
+                show_hidden,
+                sort_mode,
+                &options,
+            )
+            .await;
             this.update(cx, |this, cx| {
                 if this.search_generation != generation {
                     return;

@@ -204,6 +204,113 @@ impl FileManagerPanel {
         cx.notify();
     }
 
+    /// The filters of the search box, like GNOME Files' query editor popover
+    /// (`nautilus-query-editor.blp`): scope, file kind, date and content.
+    pub(crate) fn deploy_search_filter_menu(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::model::search::SearchKind;
+
+        let panel = cx.entity();
+        let focus = self.focus_handle.clone();
+        let options = self.search_options.clone();
+
+        self.deploy_menu(
+            position,
+            move |menu, _, _| {
+                let mut menu = menu
+                    .context(focus)
+                    .entry(
+                        if options.recursive {
+                            "Search in subfolders ✓"
+                        } else {
+                            "Search in subfolders"
+                        },
+                        None,
+                        {
+                            let panel = panel.clone();
+                            move |window, cx| {
+                                panel.update(cx, |state, cx| {
+                                    state.search_options.recursive =
+                                        !state.search_options.recursive;
+                                    state.start_search(window, cx);
+                                });
+                            }
+                        },
+                    )
+                    .entry(
+                        if options.contents {
+                            "Search file contents ✓"
+                        } else {
+                            "Search file contents"
+                        },
+                        None,
+                        {
+                            let panel = panel.clone();
+                            move |window, cx| {
+                                panel.update(cx, |state, cx| {
+                                    state.search_options.contents = !state.search_options.contents;
+                                    state.start_search(window, cx);
+                                });
+                            }
+                        },
+                    )
+                    .separator();
+
+                for kind in [
+                    SearchKind::Any,
+                    SearchKind::Images,
+                    SearchKind::Documents,
+                    SearchKind::Code,
+                ] {
+                    let panel = panel.clone();
+                    let label = if options.kind == kind {
+                        format!("{} ✓", kind.label())
+                    } else {
+                        kind.label().to_string()
+                    };
+                    menu = menu.entry(label, None, move |window, cx| {
+                        panel.update(cx, |state, cx| {
+                            state.search_options.kind = kind;
+                            state.start_search(window, cx);
+                        });
+                    });
+                }
+
+                menu = menu.separator();
+                for (label, days) in [
+                    ("Any time", None),
+                    ("Modified in the last 7 days", Some(7u32)),
+                    ("Modified in the last 30 days", Some(30u32)),
+                ] {
+                    let panel = panel.clone();
+                    let chosen = options.modified_within_days == days;
+                    menu = menu.entry(
+                        if chosen {
+                            format!("{label} ✓")
+                        } else {
+                            label.to_string()
+                        },
+                        None,
+                        move |window, cx| {
+                            panel.update(cx, |state, cx| {
+                                state.search_options.modified_within_days = days;
+                                state.start_search(window, cx);
+                            });
+                        },
+                    );
+                }
+
+                menu
+            },
+            window,
+            cx,
+        );
+    }
+
     /// The context menu of a sidebar row.
     ///
     /// GNOME Files offers the same three actions on a places row: open the

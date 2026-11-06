@@ -179,6 +179,8 @@ pub struct FileManagerPanel {
     pub(crate) details_pane_visible: bool,
     /// The search query of the search box; `None` when the box is closed.
     pub(crate) search_query: Option<String>,
+    /// What the search looks at: scope, file kind, date and content filters.
+    pub(crate) search_options: crate::model::search::SearchOptions,
     /// The text entry of the search mode. It owns the text, the caret and the
     /// selection; the panel keeps `search_query` in sync so the rest of the
     /// panel can keep working with a plain string.
@@ -294,6 +296,7 @@ impl FileManagerPanel {
             sidebar_visible: state.sidebar_visible,
             details_pane_visible: state.details_pane_visible,
             search_query: None,
+            search_options: crate::model::search::SearchOptions::default(),
             search_field: cx.new(|cx| SearchField::new("file-manager-search-input", cx)),
             rename_field: cx.new(|cx| SearchField::new("file-manager-rename-input", cx)),
             path_field: cx.new(|cx| SearchField::new("file-manager-path-input", cx)),
