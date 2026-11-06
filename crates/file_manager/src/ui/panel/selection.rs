@@ -200,24 +200,59 @@ impl FileManagerPanel {
         cx: &mut Context<Self>,
     ) {
         let modifiers = event.keystroke.modifiers;
-        // While the search entry is open it owns the keystrokes; the panel only
-        // keeps Escape so the mode can still be left when the focus sits on the
-        // list (after clicking a hit).
+        // While the search entry is open it owns the keystrokes. The entry is
+        // focused when the mode opens, but clicking the list moves the focus back
+        // to the panel; typing then still belongs to the query, so the keys are
+        // forwarded to the entry instead of being dropped.
         if self.search_query.is_some() {
-            if event.keystroke.key == "escape" {
-                self.toggle_search(window, cx);
-                cx.stop_propagation();
+            match event.keystroke.key.as_str() {
+                "escape" => self.toggle_search(window, cx),
+                "backspace" => self
+                    .search_field
+                    .update(cx, |field, cx| field.delete_backward(window, cx)),
+                key => {
+                    let printable = !modifiers.control && !modifiers.alt && !modifiers.platform;
+                    let text = event
+                        .keystroke
+                        .key_char
+                        .as_deref()
+                        .filter(|text| !text.is_empty());
+                    if let (true, Some(text)) = (printable, text) {
+                        self.search_field
+                            .update(cx, |field, cx| field.insert_text(text, window, cx));
+                    } else {
+                        let _ = key;
+                    }
+                }
             }
+            cx.stop_propagation();
             return;
         }
-        // While the location entry is open it owns the keys (it is focused and
-        // stops propagation); the panel only keeps Escape, so the mode can still
-        // be left when the focus sits on the list.
+        // While the location entry is open it usually owns the keys, but a click
+        // on the list moves the focus back to the panel; forward typing there too
+        // so the entry stays usable.
         if self.path_editing {
-            if event.keystroke.key == "escape" {
-                self.cancel_path_edit(window, cx);
-                cx.stop_propagation();
+            match event.keystroke.key.as_str() {
+                "escape" => self.cancel_path_edit(window, cx),
+                "backspace" => self
+                    .path_field
+                    .update(cx, |field, cx| field.delete_backward(window, cx)),
+                key => {
+                    let printable = !modifiers.control && !modifiers.alt && !modifiers.platform;
+                    let text = event
+                        .keystroke
+                        .key_char
+                        .as_deref()
+                        .filter(|text| !text.is_empty());
+                    if let (true, Some(text)) = (printable, text) {
+                        self.path_field
+                            .update(cx, |field, cx| field.insert_text(text, window, cx));
+                    } else {
+                        let _ = key;
+                    }
+                }
             }
+            cx.stop_propagation();
             return;
         }
         // While an inline rename is active the rename field owns the keys (it

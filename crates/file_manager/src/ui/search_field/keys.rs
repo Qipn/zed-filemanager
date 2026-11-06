@@ -60,6 +60,19 @@ impl SearchField {
         }
         self.replace_text_in_range(None, "", window, cx);
     }
+    /// Inserts `text` at the caret (or over the selection).
+    ///
+    /// The panel uses this when it has the focus while the search mode is open,
+    /// so typing keeps feeding the query instead of being dropped.
+    pub(crate) fn insert_text(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.replace_text_in_range(None, text, window, cx);
+    }
+
+    /// Deletes the selection, or one grapheme before the caret.
+    pub(crate) fn delete_backward(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.backspace(window, cx);
+    }
+
     pub(super) fn handle_key(
         &mut self,
         event: &KeyDownEvent,

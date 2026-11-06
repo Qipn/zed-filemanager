@@ -339,6 +339,52 @@ async fn test_tree_root_does_not_follow_the_current_directory(cx: &mut TestAppCo
     });
 }
 
+/// Typing keeps feeding the query even when the panel, not the entry, holds the
+/// focus.
+///
+/// Regression test for "clicking the search button does not accept input":
+/// opening the mode focuses the entry, but any click on the list moves the focus
+/// back to the panel, and the panel used to drop every key while the search was
+/// open.
+#[gpui::test]
+async fn test_typing_while_the_panel_holds_the_focus(cx: &mut TestAppContext) {
+    init_globals(cx);
+
+    let fs = fs::FakeFs::new(cx.background_executor.clone());
+    let project = Project::test(fs.clone(), ["/".as_ref()], cx).await;
+
+    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        FileManagerPanel::new(workspace, window, cx)
+    });
+
+    let window = cx.update(|_window, cx| {
+        cx.open_window(WindowOptions::default(), |_window, _cx| panel.clone())
+            .expect("failed to open the test window")
+    });
+    let window = window.into();
+
+    // Open the search, then hand the focus back to the panel, like a click on
+    // the file list does.
+    cx.update_window(window, |_, window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.toggle_search(window, cx);
+            window.focus(&panel.focus_handle, cx);
+        });
+    })
+    .unwrap();
+
+    TestAppContext::simulate_keystrokes(&mut *cx, window, "x y");
+
+    panel.read_with(cx, |panel, cx| {
+        assert_eq!(
+            panel.search_field.read(cx).content(),
+            "xy",
+            "the panel forwards typed characters to the search entry"
+        );
+    });
+}
+
 /// The icon grid view and the details pane render as well.
 #[gpui::test]
 async fn test_render_grid_and_details_pane(cx: &mut TestAppContext) {
