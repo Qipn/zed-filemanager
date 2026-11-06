@@ -1,0 +1,105 @@
+name: File manager
+
+# Only the file manager panel is exercised on every push: it is the part this
+# fork changes, and `cargo test -p file_manager` stays well inside a standard
+# GitHub runner (no WebRTC download, no linking the zed binary).
+#
+# The full application build is behind `workflow_dispatch`, because building and
+# linking `zed` needs ~30-40 minutes, the WebRTC prebuilt archive, and much more
+# disk than a hosted runner comfortably has.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/file_manager/**"
+      - "crates/workspace/**"
+      - "crates/ui/**"
+      - "crates/gpui/**"
+      - "crates/theme/**"
+      - "crates/file_icons/**"
+      - "crates/settings_content/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "script/linux"
+      - ".github/workflows/file-manager.yml"
+  pull_request:
+    paths:
+      - "crates/file_manager/**"
+      - ".github/workflows/file-manager.yml"
+  workflow_dispatch:
+    inputs:
+      build_app:
+        description: "Also build the zed binary (slow: ~40 min, needs the WebRTC archive)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  # Debug info dominates a Zed debug build's size; dropping it keeps the hosted
+  # runner (and the rust-cache entry) inside its disk budget.
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+
+jobs:
+  test:
+    name: file_manager tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      # Zed's own installer, so the system dependency list never drifts from
+      # upstream (`script/linux` handles sudo itself).
+      - name: Install system dependencies
+        run: ./script/linux
+
+      # `rust-toolchain.toml` pins 1.98.1; a first cargo invocation makes rustup
+      # fetch it, which the cache action below then keys on.
+      - name: Install the pinned toolchain
+        run: cargo --version
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: file-manager
+          cache-on-failure: true
+
+      - name: Test the file manager panel
+        run: cargo test -p file_manager --locked
+
+  build-app:
+    name: zed binary (manual)
+    if: github.event_name == 'workflow_dispatch' && inputs.build_app
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: ./script/linux
+
+      - name: Install the pinned toolchain
+        run: cargo --version
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: zed-app
+          cache-on-failure: true
+
+      # `webrtc-sys` downloads its own prebuilt archive during the build, so no
+      # `LK_CUSTOM_WEBRTC` is needed here (unlike `script/build-zed`, which
+      # exists for the NixOS setup and expects a local archive).
+      - name: Build zed
+        run: cargo build -p zed --locked
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zed-linux-x86_64-debug
+          path: target/debug/zed
+          if-no-files-found: error
