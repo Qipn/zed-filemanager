@@ -179,9 +179,20 @@ script/install-native            # 装 target/release/zed（没有则用 debug�
 script/install-native --link     # 改用符号链接：重新编译即生效，省 500 MB 拷贝
 script/install-native --uninstall
 script/install-native --dry-run
+
+# 顶掉 nixpkgs 装的编辑器（~/.local/bin 在 PATH 里早于系统 profile）
+script/install-native --name zeditor --hardlink
 ```
 
-- 二进制叫 `~/.local/bin/zed-filemanager`，**不叫 `zed`**，免得盖掉系统里可能还留着的 1.26
+> **不要用 `--name zed`**：NixOS 系统 profile 里的 `zed` 是 **ZFS Event Daemon**
+> （`zfs-user`），不是编辑器；nixpkgs 的 `zed-editor` 装的命令叫 `zeditor`。
+> 脚本对 `--name zed` 会告警。
+
+- 二进制默认叫 `~/.local/bin/zed-filemanager`；`--name zeditor` 则直接遮住 nix 的那份
+  （`/run/current-system/sw/bin/zeditor` 仍在，需要时用绝对路径）
+- `--hardlink` 用硬链接而不是拷贝：同一文件系统下零字节开销（`stat -c %h` 可以看到
+  link 数增加、inode 相同）。代价是它**固定在这一次编译的产物**上，重新编译后要重跑
+  一次安装；想要“编译完就是最新”的话用 `--link`（符号链接）
 - desktop / 图标 / metainfo 落在 `~/.local/share`，应用网格里显示为 “Zed File Manager”
 - 用的是原生数据目录 `~/.local/share/zed` 与 `~/.config/zed`，不是 Flatpak 的
   `~/.var/app/<id>`（想搬过去的设置自己拷 `settings.json` 即可）

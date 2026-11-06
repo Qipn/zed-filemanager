@@ -45,6 +45,7 @@ fi
 
 BINARY=""
 LINK=0
+HARDLINK=0
 UNINSTALL=0
 DRY_RUN=0
 
@@ -54,7 +55,11 @@ Usage: script/install-native [options]
 
 Options:
   --binary PATH   install this binary (default: target/release/zed, then target/debug/zed)
+  --name NAME     install as NAME (default: zed-filemanager); use `zeditor` to shadow
+                  the nixpkgs zed-editor, since ~/.local/bin comes first in PATH
   --link          symlink the binary instead of copying it, so a rebuild is picked up
+  --hardlink      hardlink the binary instead of copying: no 500 MB copy, but the
+                  installed file is frozen at that build
   --uninstall     remove the binary, desktop entry, icon and metainfo
   --dry-run       print the actions without touching anything
   -h, --help      show this help
@@ -64,7 +69,9 @@ EOF
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --binary) BINARY="$2"; shift 2 ;;
+        --name) NAME="$2"; shift 2 ;;
         --link) LINK=1; shift ;;
+        --hardlink) HARDLINK=1; shift ;;
         --uninstall) UNINSTALL=1; shift ;;
         --dry-run) DRY_RUN=1; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -73,6 +80,14 @@ while [[ $# -gt 0 ]]; do
 done
 
 BIN_PATH="$BIN_DIR/$NAME"
+
+if [[ "$NAME" == zed ]]; then
+    # On NixOS the system profile's `zed` is the ZFS Event Daemon, not the editor
+    # (`zed-editor` installs `zeditor`). Shadowing it here would take that tool
+    # away from every shell.
+    echo "warn: the system `zed` is the ZFS Event Daemon (zfs-user), not the editor." >&2
+    echo "      The editor's binary is \`zeditor\` — use --name zeditor instead." >&2
+fi
 DESKTOP_DST="$DATA_HOME/applications/$APP_ID.desktop"
 ICON_DST="$DATA_HOME/icons/hicolor/512x512/apps/$APP_ID.png"
 METAINFO_DST="$DATA_HOME/metainfo/$APP_ID.metainfo.xml"
@@ -132,6 +147,14 @@ if [[ "$LINK" == 1 ]]; then
     # A symlink keeps the build directory as the source of truth: rebuilding
     # updates the installed application without re-running this script.
     run ln -sfn "$BINARY" "$BIN_PATH"
+elif [[ "$HARDLINK" == 1 ]]; then
+    # A hardlink shares the inode, so nothing is copied — but the installed file
+    # is pinned to this build: a rebuild writes a new inode and the hardlink
+    # keeps pointing at the old one.
+    if ! run ln -f "$BINARY" "$BIN_PATH" 2>/dev/null; then
+        echo "warn: hardlink failed (different filesystem?); copying instead." >&2
+        run install -Dm755 "$BINARY" "$BIN_PATH"
+    fi
 else
     run install -Dm755 "$BINARY" "$BIN_PATH"
 fi
