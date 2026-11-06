@@ -1,21 +1,35 @@
 #!/usr/bin/env bash
-# Purpose: install the already-built `zed` binary as a native (non-Flatpak)
-# application: the binary in $XDG_BIN_HOME, plus desktop entry, icon and
-# metainfo in $XDG_DATA_HOME, so it shows up in the app grid.
+# Purpose: 用**硬链接**把编译产物装成原生应用（不复制、不占额外空间）。
+#
+#   产物                       →  安装位置
+#   target/release/zed         →  ~/.local/lib/zed/zed-editor
+#   target/release/cli         →  ~/.local/bin/zeditor
+#   desktop / 图标 / metainfo  →  ~/.local/share/…
 #
 # Usage:
-#   script/install-native                 # install target/release/zed (falls back to debug)
-#   script/install-native --binary PATH   # install that binary instead
-#   script/install-native --link          # symlink instead of copying (saves ~500 MB)
-#   script/install-native --uninstall     # remove the files this script installed
-#   script/install-native --dry-run       # print what would happen
+#   script/install-native               # 安装或重新安装
+#   script/install-native --uninstall   # 删掉本脚本装过的东西
+#   script/install-native -h            # 显示这段说明
 #
-# Why not Flatpak:
-#   The sandbox has no host toolchain (no nix-shell / cc / pkg-config on PATH),
-#   its /etc/passwd is synthesized with `/bin/sh`, and `$SHELL` depends on how
-#   the app happened to be launched. All three make the integrated terminal and
-#   `script/build-zed` misbehave. A native install removes the whole layer; the
-#   Flatpak stays useful for handing a self-contained copy to someone else.
+# 为什么要装两个文件（editor + CLI）：
+#   单实例是 CLI 做的（crates/cli/src/main.rs 的 launch()）：它连
+#   ~/.local/share/zed/zed-<channel>.sock，连上就把请求发过去（已有实例开窗口），
+#   连不上才 fork 起 editor。只装 editor 的话，从菜单栏每点一次就新起一个进程，
+#   于是"点固定图标又冒出一个新图标"。
+#   CLI 找 editor 的顺序是 ../libexec/zed-editor、../lib/zed/zed-editor、./zed，
+#   所以 editor 放在 ~/.local/lib/zed/ 下正好被找到，且不占用 `zed` 这个名字
+#   （NixOS 上那个 `zed` 是 ZFS Event Daemon，不能遮蔽）。
+#
+# 为什么 desktop 文件叫 dev.zed.Zed-Dev.desktop：
+#   Wayland 下 GNOME 用窗口的 app_id 去匹配**同名**的 .desktop 文件，X11 下看
+#   StartupWMClass。我们的版本串是 1.28.0+dev，ReleaseChannel::app_id() 返回
+#   "dev.zed.Zed-Dev"（crates/release_channel/src/lib.rs）。名字对不上，面板就会
+#   把窗口当成另一个应用：固定的图标旁边再生一个。
+#
+# Wayland 库：gpui 用 dlopen("libwayland-client.so.0")，而进程跑在 nix 的 ld.so 下，
+#   看不到运行时那份。所以 .desktop 的 Exec 用 env 只给这个程序注入
+#   LD_LIBRARY_PATH。它只在"当前没有实例、需要新起 editor"时才用得到；已经有实例
+#   在跑时 CLI 只发一个 datagram，从任何 shell 直接 `zeditor .` 都能用。
 #
 # Created: 2026-11-07
 
@@ -23,297 +37,132 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-APP_ID=io.github.qipn.ZedFileManager
-DESKTOP_SRC="flatpak/$APP_ID.desktop"
-METAINFO_SRC="flatpak/$APP_ID.metainfo.xml"
-ICON_SRC="crates/zed/resources/app-icon.png"
+APP_ID=dev.zed.Zed-Dev                 # 与 ReleaseChannel::app_id() 一致
+PROG=zeditor                           # 不叫 zed：那是 ZFS Event Daemon
 
-# The binary must not shadow the `zed` from the system profile (the user may
-# keep the 1.26 stable around), so it gets its own name.
-NAME=zed-filemanager
+EDITOR_SRC=target/release/zed
+CLI_SRC=target/release/cli
 
-if [[ -f /.flatpak-info ]]; then
-    # Inside the Flatpak sandbox `XDG_DATA_HOME` points at `~/.var/app/<id>/data`,
-    # which the host session never looks at. `$HOME` is the real home (it is
-    # bind-mounted), so install into the paths the desktop actually reads.
-    BIN_DIR="$HOME/.local/bin"
-    DATA_HOME="$HOME/.local/share"
-else
-    BIN_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
-    DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
-fi
+HOME_LOCAL="$HOME/.local"
+EDITOR_DST="$HOME_LOCAL/lib/zed/zed-editor"
+CLI_DST="$HOME_LOCAL/bin/$PROG"
+DESKTOP_DST="$HOME_LOCAL/share/applications/$APP_ID.desktop"
+ICON_DST="$HOME_LOCAL/share/icons/hicolor/512x512/apps/io.github.qipn.ZedFileManager.png"
+METAINFO_DST="$HOME_LOCAL/share/metainfo/io.github.qipn.ZedFileManager.metainfo.xml"
 
-BINARY=""
-LINK=0
-HARDLINK=0
+# 上一版（单文件 + sh 启动器 + 不同 desktop 名）留下的东西，安装/卸载时一并清掉
+LEGACY=(
+    "$HOME_LOCAL/bin/zeditor-bin"
+    "$HOME_LOCAL/bin/zed-filemanager"
+    "$HOME_LOCAL/bin/zed-filemanager-bin"
+    "$HOME_LOCAL/share/applications/io.github.qipn.ZedFileManager.desktop"
+)
+
+usage() { awk 'NR>1 { if (/^#/) { sub(/^# ?/, ""); print } else { exit } }' "$0"; }
+die() { echo "error: $*" >&2; exit 1; }
+
 UNINSTALL=0
-DRY_RUN=0
-
-usage() {
-    cat <<'EOF'
-Usage: script/install-native [options]
-
-Options:
-  --binary PATH   install this binary (default: target/release/zed, then target/debug/zed)
-  --name NAME     install as NAME (default: zed-filemanager); use `zeditor` to shadow
-                  the nixpkgs zed-editor, since ~/.local/bin comes first in PATH
-  --link          symlink the binary instead of copying it, so a rebuild is picked up
-  --hardlink      hardlink the binary instead of copying: no 500 MB copy, but the
-                  installed file is frozen at that build
-  --uninstall     remove the binary, desktop entry, icon and metainfo
-  --dry-run       print the actions without touching anything
-  -h, --help      show this help
-EOF
-}
-
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --binary) BINARY="$2"; shift 2 ;;
-        --name) NAME="$2"; shift 2 ;;
-        --link) LINK=1; shift ;;
-        --hardlink) HARDLINK=1; shift ;;
         --uninstall) UNINSTALL=1; shift ;;
-        --dry-run) DRY_RUN=1; shift ;;
         -h|--help) usage; exit 0 ;;
-        *) echo "error: unknown argument '$1'" >&2; usage; exit 1 ;;
+        *) die "unknown argument '$1'（只支持 --uninstall / -h）" ;;
     esac
 done
 
-BIN_PATH="$BIN_DIR/$NAME"
-# The real ELF lives next to the launcher: gpui dlopen()s libwayland-client, and
-# the process runs under nix's ld.so, so the launcher has to prepend that library
-# to LD_LIBRARY_PATH (see the generated shim below).
-REAL_PATH="$BIN_DIR/$NAME-bin"
+refresh_desktop_db() {
+    command -v update-desktop-database >/dev/null 2>&1 &&
+        update-desktop-database "$HOME_LOCAL/share/applications" >/dev/null 2>&1 || true
+}
 
-if [[ "$NAME" == zed ]]; then
-    # On NixOS the system profile's `zed` is the ZFS Event Daemon, not the editor
-    # (`zed-editor` installs `zeditor`). Shadowing it here would take that tool
-    # away from every shell.
-    echo "warn: the system \`zed\` is the ZFS Event Daemon (zfs-user), not the editor." >&2
-    echo "      The editor's binary is \`zeditor\` — use --name zeditor instead." >&2
-fi
-
-# 透明化所有会遮蔽的现有命令（eg. --name zeditor 会盖掉 nixpkgs zed-editor 的 zeditor）。
-# 注意：永远不要去动 /run/current-system 下的任何东西，--uninstall 也只删 ~/.local 里的。
-existing_cmd=$(command -v "$NAME" 2>/dev/null || true)
-if [[ -n "$existing_cmd" && "$existing_cmd" != "$BIN_PATH" ]]; then
-    echo "note: \`$NAME\` 现在指向 $existing_cmd；装到 ~/.local/bin 后会在 PATH 里遮蔽它。" >&2
-fi
-DESKTOP_DST="$DATA_HOME/applications/$APP_ID.desktop"
-ICON_DST="$DATA_HOME/icons/hicolor/512x512/apps/$APP_ID.png"
-METAINFO_DST="$DATA_HOME/metainfo/$APP_ID.metainfo.xml"
-
-run() {
-    if [[ "$DRY_RUN" == 1 ]]; then
-        printf '+'; printf ' %q' "$@"; printf '\n'
-    else
-        "$@"
-    fi
+cleanup_legacy() {
+    local path
+    for path in "${LEGACY[@]}"; do
+        [[ -e "$path" || -L "$path" ]] && { echo "  清理旧文件 $path"; rm -f "$path"; }
+    done
 }
 
 if [[ "$UNINSTALL" == 1 ]]; then
-    for path in "$BIN_PATH" "$REAL_PATH" "$DESKTOP_DST" "$ICON_DST" "$METAINFO_DST"; do
-        if [[ -e "$path" || -L "$path" ]]; then
-            echo "removing $path"
-            run rm -f "$path"
-        fi
+    for path in "$EDITOR_DST" "$CLI_DST" "$DESKTOP_DST" "$ICON_DST" "$METAINFO_DST"; do
+        [[ -e "$path" || -L "$path" ]] && { echo "removing $path"; rm -f "$path"; }
     done
-    # The desktop entry may have been indexed.
-    if command -v update-desktop-database >/dev/null 2>&1; then
-        run update-desktop-database "$DATA_HOME/applications" || true
-    fi
-    echo "done. Data in $DATA_HOME/zed and $HOME/.config/zed was left untouched."
+    cleanup_legacy
+    refresh_desktop_db
+    echo "done。数据目录 ~/.local/share/zed 与 ~/.config/zed 未动。"
     exit 0
 fi
 
-# Pick the binary: an explicit --binary wins, then the release build, then the
-# debug one (so the script is useful right after `script/build-zed -- -j 4`).
-# 必须装真 ELF。曾经出过事：target/release/zed 被写成了启动器脚本（`--link` 之后再跑
-# 非 link 的 install，会**透过**符号链写回源文件），于是脚本被当成二进制装成 `-bin`，
-# 两个启动器互相 exec，而启动器每轮又往 LD_LIBRARY_PATH 拼一次，环境变量越滝越大，
-# 最后 execve 返回 E2BIG（中文报的“参数列表过长”）。
-is_elf() {
-    [[ "$(head -c 4 -- "$1" 2>/dev/null | od -An -c | tr -d ' \n')" == "177ELF" ]]
-}
-
-if [[ -n "$BINARY" ]]; then
-    if [[ ! -x "$BINARY" ]]; then
-        echo "error: $BINARY 不存在或不可执行。" >&2
-        exit 1
-    fi
-    if ! is_elf "$BINARY"; then
-        echo "error: $BINARY 不是 ELF 二进制（是脚本或已损坏）。" >&2
-        echo "hint: 旧版本的 install-native 可能把它写成了启动器脚本；重新编译：" >&2
-        echo "      script/build-zed --release" >&2
-        exit 1
-    fi
-else
-    for candidate in target/release/zed target/debug/zed; do
-        [[ -x "$candidate" ]] || continue
-        if is_elf "$candidate"; then
-            BINARY="$candidate"
-            break
-        fi
-        echo "warn: 跳过 $candidate（不是 ELF，可能是被覆盖的启动器脚本）。" >&2
-    done
-    if [[ -z "$BINARY" ]]; then
-        echo "error: 没找到可用的 zed 二进制（找过 target/release/zed、target/debug/zed）。" >&2
-        echo "hint: script/build-zed --release，或用 --binary PATH 指定。" >&2
-        exit 1
-    fi
-fi
-BINARY=$(cd "$(dirname "$BINARY")" && pwd)/$(basename "$BINARY")
-
-if [[ "$BINARY" == "$BIN_PATH" || "$BINARY" == "$REAL_PATH" ]]; then
-    echo "error: 源和目标指向同一个文件（$BINARY），继续下去会把自己覆盖掉。" >&2
-    exit 1
-fi
-
-for source in "$DESKTOP_SRC" "$METAINFO_SRC" "$ICON_SRC"; do
-    if [[ ! -f "$source" ]]; then
-        echo "error: $source is missing." >&2
-        exit 1
-    fi
-done
-
-# Resolve the nix `libwayland-client` directory for the launcher.
-#
-# gpui loads Wayland with `dlopen("libwayland-client.so.0")`, but the process
-# runs under nix's ld.so, which only searches RUNPATH and its own defaults — it
-# never looks in `/usr/lib/x86_64-linux-gnu`, which does not even exist on
-# NixOS. Without this the app dies at startup with
-# `failed to connect to Wayland compositor: The wayland library could not be loaded`.
-#
-# It has to be *nix's* copy (the one nix mesa's EGL/Vulkan drivers are built
-# against), not some other version found first: LD_LIBRARY_PATH beats RUNPATH and
-# only one soname is loaded. Same rule as `script/build-flatpak`.
-resolve_wayland_lib() {
-    if [[ -n "${ZED_WAYLAND_LIB:-}" ]]; then
-        printf '%s\n' "$ZED_WAYLAND_LIB"
-        return 0
-    fi
-
-    local vendor_json mesa dir
-    vendor_json="${EGL_VENDOR_FILE:-/run/opengl-driver/share/glvnd/egl_vendor.d/50_mesa.json}"
-    if [[ -r "$vendor_json" ]]; then
-        mesa=$(sed -n 's/.*"library_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$vendor_json" | head -n1)
-    fi
-    if [[ -n "$mesa" && -e "$mesa" ]] && command -v readelf >/dev/null 2>&1; then
-        while IFS= read -r dir; do
-            if [[ -e "$dir/libwayland-client.so.0" ]]; then
-                printf '%s\n' "$dir"
-                return 0
-            fi
-        done < <(readelf -d "$mesa" 2>/dev/null | grep -E 'RUNPATH|RPATH' | grep -oE '/nix/store/[^]:]+')
-    fi
-
+# nix 的 libwayland-client：优先 ZED_WAYLAND_LIB，否则取 store 里版本最高的那份。
+wayland_lib() {
+    [[ -n "${ZED_WAYLAND_LIB:-}" ]] && { printf '%s\n' "$ZED_WAYLAND_LIB"; return 0; }
+    local dir
     for dir in $(ls -d /nix/store/*-wayland-[0-9]*/lib 2>/dev/null | sort -V -r); do
-        if [[ -e "$dir/libwayland-client.so.0" ]]; then
-            printf '%s\n' "$dir"
-            return 0
-        fi
+        [[ -e "$dir/libwayland-client.so.0" ]] && { printf '%s\n' "$dir"; return 0; }
     done
     return 1
 }
 
-WAYLAND_LIB=$(resolve_wayland_lib || true)
-if [[ -n "$WAYLAND_LIB" ]]; then
-    echo "wayland: $WAYLAND_LIB"
-else
-    echo "warn: 没定位到 nix 的 libwayland-client，启动器不会改 LD_LIBRARY_PATH。" >&2
-    echo "hint: 非 NixOS 通常正常；NixOS 上可用 ZED_WAYLAND_LIB=/nix/store/...-wayland-x.y.z/lib 覆盖。" >&2
-fi
-
-echo "installing $BINARY"
-run install -d "$BIN_DIR" "$DATA_HOME/applications" \
-    "$DATA_HOME/icons/hicolor/512x512/apps" "$DATA_HOME/metainfo"
-
-# The real ELF goes to `$NAME-bin`; `$NAME` is a small launcher that fixes up
-# LD_LIBRARY_PATH first. Keeping the two apart means the launcher is always
-# correct even when the binary is swapped in by `--hardlink` / `--link`.
-if [[ "$LINK" == 1 ]]; then
-    # A symlink keeps the build directory as the source of truth: rebuilding
-    # updates the installed application without re-running this script.
-    run ln -sfn "$BINARY" "$REAL_PATH"
-elif [[ "$HARDLINK" == 1 ]]; then
-    # A hardlink shares the inode, so nothing is copied — but the installed file
-    # is pinned to this build: a rebuild writes a new inode and the hardlink
-    # keeps pointing at the old one.
-    if ! run ln -f "$BINARY" "$REAL_PATH" 2>/dev/null; then
-        echo "warn: hardlink failed (different filesystem?); copying instead." >&2
-        run install -Dm755 "$BINARY" "$REAL_PATH"
+hardlink() {
+    local src=$1 dst=$2
+    [[ "$src" != "$dst" ]] || die "源与目标同一文件（$src）"
+    [[ -x "$src" ]] || die "$src 不存在或不可执行"
+    mkdir -p "$(dirname "$dst")"
+    rm -f "$dst"                       # 断开上一次留下的符号链接 / 旧 inode
+    if ln "$src" "$dst" 2>/dev/null; then
+        echo "  hardlink $(basename "$dst")"
+    else
+        echo "  warn: 硬链接失败（跨文件系统？），退化为拷贝 $(basename "$dst")" >&2
+        install -Dm755 "$src" "$dst"
     fi
+}
+
+[[ -x "$CLI_SRC" ]] || die "没找到 $CLI_SRC。单实例需要 CLI：
+      script/build-zed --release -- -p cli"
+
+WAYLAND_LIB=$(wayland_lib || true)
+
+echo "installing"
+hardlink "$EDITOR_SRC" "$EDITOR_DST"
+hardlink "$CLI_SRC" "$CLI_DST"
+
+install -d "$HOME_LOCAL/share/applications" \
+    "$HOME_LOCAL/share/icons/hicolor/512x512/apps" "$HOME_LOCAL/share/metainfo"
+
+# Exec 里注入 LD_LIBRARY_PATH（只有首次拉起 editor 才用得到）；TryExec 不能带 env。
+if [[ -n "$WAYLAND_LIB" ]]; then
+    EXEC_LINE="Exec=env LD_LIBRARY_PATH=$WAYLAND_LIB $CLI_DST %U"
 else
-    # 先删掉旧文件：如果 REAL_PATH 还是上一次 `--link` 留下的符号链接，install 会
-    # **透过**它写回源二进制（上次就是这么把 target/release/zed 写成脚本的）。
-    run rm -f "$REAL_PATH"
-    run install -Dm755 "$BINARY" "$REAL_PATH"
+    echo "warn: 没找到 nix 的 libwayland-client；Wayland 会话里首次启动可能 panic" >&2
+    EXEC_LINE="Exec=$CLI_DST %U"
 fi
+sed -e "s|^TryExec=.*|TryExec=$CLI_DST|" \
+    -e "s|^Exec=.*|$EXEC_LINE|" \
+    "flatpak/io.github.qipn.ZedFileManager.desktop" > "$DESKTOP_DST"
+# Wayland 用文件名匹配，X11 用这一行匹配
+sed -i "/^TryExec=/a StartupWMClass=$APP_ID" "$DESKTOP_DST"
 
-if [[ "$DRY_RUN" == 1 ]]; then
-    echo "+ write launcher $BIN_PATH (LD_LIBRARY_PATH=$WAYLAND_LIB, exec $REAL_PATH)"
-else
-    # 同样先断开可能的符号链接，避免写穿
-    rm -f "$BIN_PATH"
-    {
-        echo '#!/bin/sh'
-        echo '# 由 script/install-native 生成，不要手改。'
-        if [[ -n "$WAYLAND_LIB" ]]; then
-            echo '# gpui 用 dlopen 加载 libwayland-client，而进程跑的是 nix 的 ld.so，只看'
-            echo '# RUNPATH；必须把 nix 那份放进 LD_LIBRARY_PATH（换别的版本会顶掉 nix mesa'
-            echo '# 的 EGL/Vulkan 依赖，导致一个渲染后端都建不起来）。'
-            echo "WAYLAND_LIB=$WAYLAND_LIB"
-            # 幂等：已经拼过就不重复拼。万一启动器被误接到自己，也不会把
-            # LD_LIBRARY_PATH 滚大到 execve 报 E2BIG。
-            echo 'case ":${LD_LIBRARY_PATH:-}:" in'
-            echo '    *":$WAYLAND_LIB:"*) ;;'
-            echo '    *) export LD_LIBRARY_PATH="$WAYLAND_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ;;'
-            echo 'esac'
-        fi
-        echo "exec \"$REAL_PATH\" \"\$@\""
-    } > "$BIN_PATH"
-    chmod 755 "$BIN_PATH"
-fi
+install -Dm644 crates/zed/resources/app-icon.png "$ICON_DST"
+install -Dm644 "flatpak/io.github.qipn.ZedFileManager.metainfo.xml" "$METAINFO_DST"
 
-# Reuse the Flatpak desktop file so Name / Categories / MimeType stay in sync,
-# but point Exec and TryExec at the absolute path: a launcher does not inherit
-# the shell's PATH.
-if [[ "$DRY_RUN" == 1 ]]; then
-    echo "+ sed -e 's|^TryExec=.*|TryExec=$BIN_PATH|' -e 's|^Exec=.*|Exec=$BIN_PATH %U|' $DESKTOP_SRC > $DESKTOP_DST"
-else
-    sed -e "s|^TryExec=.*|TryExec=$BIN_PATH|" \
-        -e "s|^Exec=.*|Exec=$BIN_PATH %U|" \
-        "$DESKTOP_SRC" > "$DESKTOP_DST"
-fi
-
-run install -Dm644 "$ICON_SRC" "$ICON_DST"
-run install -Dm644 "$METAINFO_SRC" "$METAINFO_DST"
-
-if command -v update-desktop-database >/dev/null 2>&1; then
-    run update-desktop-database "$DATA_HOME/applications" || true
-fi
+cleanup_legacy
+refresh_desktop_db
 
 cat <<EOF
 
-Installed '$NAME' (${BINARY#"$(pwd)/"}).
-  launcher: $BIN_PATH        （设置 LD_LIBRARY_PATH 后 exec 下面的二进制）
-  binary:   $REAL_PATH
-  desktop:  $DESKTOP_DST
+装好了
+  CLI（单实例网关）: $CLI_DST
+  editor:            $EDITOR_DST   （与 target/release/zed 共享 inode）
+  desktop:           $DESKTOP_DST
+  app_id / WM_CLASS: $APP_ID
 
-Start it with:
-  $NAME
-or from the desktop's application grid ("Zed File Manager").
+用法
+  $PROG .                     # 已有实例 → 在那个实例里开；没有 → 起一个
+  $PROG --new .               # 强制开新窗口
+从应用网格启动的名称是 "Zed File Manager"。
 
-Notes:
-- This runs natively: the terminal, the agent and `script/build-zed` see the
-  real host environment (no bwrap sandbox), which is what the Flatpak could not
-  give you.
-- The launcher exists because gpui dlopen()s libwayland-client; without the nix
-  copy on LD_LIBRARY_PATH the app dies with "The wayland library could not be
-  loaded" when started outside a nix-shell.
-- It uses the native data directories (\`~/.local/share/zed\`, \`~/.config/zed\`),
-  not the Flatpak ones under \`~/.var/app/$APP_ID\`.
-- If the Flatpak is still installed, this desktop entry shadows the Flatpak one
-  (same app id). Remove the Flatpak with:
-      flatpak uninstall --user $APP_ID
+注意
+- 首次启动若从终端手动跑、且当前没有实例，需要带上 Wayland 库路径：
+    LD_LIBRARY_PATH=$WAYLAND_LIB $PROG .
+  经 .desktop 启动（或已有实例在跑）不需要。
+- 数据在 ~/.local/share/zed 与 ~/.config/zed（dev 通道用 db/0-dev）。
 EOF

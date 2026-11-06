@@ -169,61 +169,84 @@ script/build-zed --release -- -j 4 \
   --config 'profile.release.debug=0'
 ```
 
-### 原生安装（日常开发推荐）
+### 原生安装（日常使用推荐）
 
-Flatpak 那层沙箱会带来一串麻烦：没有宿主的工具链（`nix-shell` / `cc` / `pkg-config`）、
-`/etc/passwd` 被合成成 `/bin/sh`、`$SHELL` 取决于它是从哪里启动的。日常用就直接装到用户目录：
+装成普通用户应用，不走 Flatpak（沙箱里没有宿主工具链，终端/agent/构建都别扭）：
 
 ```bash
-script/install-native            # 装 target/release/zed（没有则用 debug）
-script/install-native --link     # 改用符号链接：重新编译即生效，省 500 MB 拷贝
+script/build-zed --release              # 编 editor
+script/build-zed --release -- -p cli    # 单实例网关（只需编一次）
+script/install-native                   # 硬链接安装
 script/install-native --uninstall
-script/install-native --dry-run
-
-# 顶掉 nixpkgs 装的编辑器（~/.local/bin 在 PATH 里早于系统 profile）
-script/install-native --name zeditor --link
 ```
 
-> **不要用 `--name zed`**：NixOS 系统 profile 里的 `zed` 是 **ZFS Event Daemon**
-> （`zfs-user`），不是编辑器；nixpkgs 的 `zed-editor` 装的命令叫 `zeditor`。
-> 脚本对 `--name zed` 会告警。
+装出来的布局：
 
-- 二进制默认叫 `~/.local/bin/zed-filemanager`；`--name zeditor` 则直接遮住 nix 的那份
-  （`/run/current-system/sw/bin/zeditor` 仍在，需要时用绝对路径）
-- `--hardlink` 用硬链接而不是拷贝：同一文件系统下零字节开销（`stat -c %h` 可以看到
-  link 数增加、inode 相同）。代价是它**固定在这一次编译的产物**上，重新编译后要重跑
-  一次安装；想要“编译完就是最新”的话用 `--link`（符号链接）
-- desktop / 图标 / metainfo 落在 `~/.local/share`，应用网格里显示为 “Zed File Manager”
-- 用的是原生数据目录 `~/.local/share/zed` 与 `~/.config/zed`，不是 Flatpak 的
-  `~/.var/app/<id>`（想搬过去的设置自己拷 `settings.json` 即可）
-- 在 Flatpak 沙箱里跑这个脚本也不会装错地方：它忽略沙箱的 `XDG_DATA_HOME`
-  （那个指向 `~/.var/app/<id>/data`），直接写真实的 `$HOME`
-- 它与 Flatpak 版用同一个 app id，desktop 条目会互相覆盖（`~/.local/share` 优先）
+| 路径 | 是什么 |
+|---|---|
+| `~/.local/bin/zeditor` | **CLI**（硬链接 `target/release/cli`），单实例网关 |
+| `~/.local/lib/zed/zed-editor` | **editor 本体**（硬链接 `target/release/zed`）|
+| `~/.local/share/applications/dev.zed.Zed-Dev.desktop` | 桌面条目（名字 = 窗口 app_id）|
+| `~/.local/share/icons/hicolor/512x512/apps/io.github.qipn.ZedFileManager.png` | 图标 |
+| `~/.local/share/metainfo/io.github.qipn.ZedFileManager.metainfo.xml` | AppStream |
 
-#### 三种落地方式与一个曾经的坑
+#### 为什么是两个文件（CLI + editor）
 
-| 方式 | 占空间 | 重新编译后 |
-|---|---|---|
-| 默认（拷贝） | ~356 MB | 需要重跑一次 install |
-| `--link`（符号链接） | 0 | 自动生效 |
-| `--hardlink` | 0 | 仍指向旧产物（重新编译会换 inode） |
+单实例是 **CLI** 实现的（`crates/cli/src/main.rs` 的 `launch()`）：它连
+`~/.local/share/zed/zed-<channel>.sock`，连上就把请求（`zed-cli://…`）发过去，
+连不上才 fork 起一个 editor。只装 editor 的话，从菜单栏每点一次就新起一个进程——
+这就是“点固定图标反而又冒出一个图标”的第一个原因。
 
-**曾经的坑（已修）**：`--link` 装完之后再跑一次**不带** `--link` 的安装，
-`install -Dm755 target/release/zed ~/.local/bin/<name>-bin` 会**透过符号链接**写回源文件，
-把 `target/release/zed`（356 MB ELF）覆盖成 509 字节的启动器脚本。之后启动器互相 `exec`，
-而启动器每轮又往 `LD_LIBRARY_PATH` 拼一次，环境变量越滚越大，最终 `execve` 返回
-**E2BIG —— 中文报「参数列表过长」**。
+CLI 找 editor 的顺序是 `../libexec/zed-editor`、`../lib/zed/zed-editor`、`./zed`，
+所以 editor 放 `~/.local/lib/zed/` 正好被找到，**且不占用 `zed` 这个名字**。
 
-现在的防护：
+#### 为什么 desktop 文件叫 `dev.zed.Zed-Dev.desktop`
 
-- `is_elf()` 校验 magic `\x7fELF`：源不是真 ELF 就报错并提示重新编译（不再把脚本当二进制装）
-- 安装前 `rm -f` 目标，杜绝透过符号链接写回源文件
-- 启动器改成幂等：`case ":$LD_LIBRARY_PATH:" in *":$WAYLAND_LIB:"*) ;; *) … esac`
-- 源与目标同路径时直接拒绝
-- 会遮蔽已有命令时打印 `note: zeditor 现在指向 /run/current-system/sw/bin/zeditor…`
+Wayland 下 GNOME 用窗口的 `app_id` 去匹配**同名**的 `.desktop` 文件；X11 下看
+`StartupWMClass`。`app_id` 来自 `ReleaseChannel::app_id()`，我们的版本串是
+`1.28.0+dev` → `dev.zed.Zed-Dev`。名字对不上，面板就会把窗口当成另一个应用，
+固定的图标旁边再生一个——这是第二个原因。所以脚本生成的桌面条目就叫这个名字，
+并写上 `StartupWMClass=dev.zed.Zed-Dev`。
 
-万一还是把 `target/release/zed` 弄坏了：从之前的 flatpak bundle 里能捞回来（那版还没拆
-launcher，二进制就叫 `zed`，已 strip 但能直接用）：
+nixpkgs 的 zed 没这问题，因为它装的就是 `dev.zed.Zed.desktop`（stable 的 id）。
+
+#### 硬链接的取舍
+
+零字节开销（`stat -c %i` 看 inode 相同，`ls -l` 看链接数 +1）。代价：
+
+- 目标目录与 `target/` 必须同一文件系统，否则脚本自动退化成拷贝
+- `cargo clean` / 删 target 后链接悬空，重跑一次安装即可
+- 重新编译会换 inode，**要重跑 `script/install-native`** 才会用上新产物
+
+#### Wayland 库路径
+
+`gpui` 用 `dlopen("libwayland-client.so.0")` 连 Wayland，而进程跑在 nix 的 `ld.so`
+下，看不到运行时那份，会直接 panic：
+
+```
+failed to connect to Wayland compositor: The wayland library could not be loaded
+```
+
+所以脚本把 nix 的 wayland 目录写进桌面条目的 `Exec=env LD_LIBRARY_PATH=…`（只影响
+这一个程序，不污染会话）。它**只在当前没有实例、需要新起 editor 时**才用得到；
+已经有实例在跑时 CLI 只发一个 datagram，任何 shell 直接 `zeditor .` 都能用。
+
+#### 一个曾经的坑（E2BIG）
+
+早期版本用“sh 启动器 + 真二进制”两个文件，并支持 `--link`。`--link` 装完后再跑一次
+非 link 的安装，`install -Dm755 <binary> <name>-bin` 会**透过符号链接**写回源文件，
+把 356 MB 的 `target/release/zed` 覆盖成 509 字节的启动器脚本；之后两个启动器互相
+`exec`，每轮又往 `LD_LIBRARY_PATH` 拼一次，环境变量越滚越大，最终 `execve` 返回
+**E2BIG（参数列表过长）**。
+
+现在没这个问题了：只有硬链接，没有启动器；安装前先 `rm -f` 目标、源与目标同路径
+直接拒绝；`--uninstall` 只删 `~/.local` 下的文件，**永远不碰** `/run/current-system`。
+
+> **不要叫 `zed`**：NixOS 系统 profile 里的 `zed` 是 **ZFS Event Daemon**
+> （`zfs-user` 的 `/sbin/zed -F`），遮蔽了会弄丢那个工具。编辑器命令用 `zeditor`。
+
+万一还是把 `target/release/zed` 弄坏了：从之前的 flatpak bundle 里能捞回来（那版还没
+拆 launcher，二进制就叫 `zed`，已 strip 但能直接用）：
 
 ```bash
 flatpak install --user -y target/release/io.github.qipn.ZedFileManager.flatpak
@@ -231,6 +254,10 @@ SRC=~/.local/share/flatpak/app/io.github.qipn.ZedFileManager/current/active/file
 rm -f target/release/zed && cp --reflink=auto "$SRC" target/release/zed && chmod 755 target/release/zed
 flatpak uninstall --user -y io.github.qipn.ZedFileManager
 ```
+
+> **装完要重启一次**：正在跑的实例如果是旧布局（直接 exec editor）启动的，它没有创建
+> `zed-dev.sock`，所以第一次点图标仍会新开一个实例。关掉后从图标重新启动一次，之后
+> 就都是“在当前实例开窗口”了。
 
 ### 打包成 Flatpak 安装到本地
 
