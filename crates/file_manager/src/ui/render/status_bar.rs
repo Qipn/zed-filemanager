@@ -105,6 +105,10 @@ pub(super) fn render_status_bar(
                 .color(Color::Custom(palette.muted)),
         )
         .child(div().flex_1())
+        // How full the drive behind the current folder is (`statvfs`).
+        .when_some(this.disk_space, |bar, (total, available)| {
+            bar.child(render_disk_space(total, available, cx))
+        })
         // The icon size stepper, only in the icon grid view.
         .when(this.view_mode == ViewMode::Grid, |this| {
             this.child(
@@ -149,6 +153,51 @@ pub(super) fn render_status_bar(
                         this.set_view_mode(ViewMode::Grid, cx);
                     }
                 })),
+        )
+        .into_any_element()
+}
+
+/// The drive capacity: a small bar plus the free space, like OpenXplorer's
+/// status-bar capacity indicator.
+fn render_disk_space(total: u64, available: u64, cx: &mut Context<FileManagerPanel>) -> AnyElement {
+    let palette = palette(cx.theme());
+    let used_ratio = if total == 0 {
+        0.
+    } else {
+        ((total.saturating_sub(available)) as f32 / total as f32).clamp(0., 1.)
+    };
+    // Running out of room is worth a warning colour.
+    let full = available.saturating_mul(10) < total;
+    let fill = if full { palette.danger } else { palette.accent };
+
+    h_flex()
+        .id("file-manager-disk-space")
+        .gap(px(6.))
+        .flex_shrink_0()
+        .child(
+            div()
+                .w(px(56.))
+                .h(px(6.))
+                .rounded_full()
+                .bg(palette.divider)
+                .overflow_hidden()
+                .child(
+                    div()
+                        .h_full()
+                        .w(px(56. * used_ratio))
+                        .rounded_full()
+                        .bg(fill),
+                ),
+        )
+        .child(
+            Label::new(format!(
+                "{} free of {}",
+                crate::model::entries::format_len(available),
+                crate::model::entries::format_len(total)
+            ))
+            .single_line()
+            .size(LabelSize::XSmall)
+            .color(Color::Custom(palette.muted)),
         )
         .into_any_element()
 }

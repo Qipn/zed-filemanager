@@ -17,7 +17,7 @@ pub(super) fn render_icon_grid(
     _window: &mut Window,
     cx: &mut Context<FileManagerPanel>,
 ) -> AnyElement {
-    let rows = this.visible_rows();
+    let rows = std::rc::Rc::new(this.grid_rows());
     uniform_list(
         "file-manager-grid",
         rows.len(),
@@ -26,7 +26,7 @@ pub(super) fn render_icon_grid(
                 .filter_map(|index| {
                     rows.get(index)
                         .cloned()
-                        .map(|(entry, _)| render_tile(this, index, entry, window, cx))
+                        .map(|(entry, _)| render_tile(this, index, entry, rows.clone(), window, cx))
                 })
                 .collect()
         }),
@@ -43,6 +43,7 @@ pub(super) fn render_tile(
     this: &FileManagerPanel,
     index: usize,
     entry: DirEntry,
+    rows: std::rc::Rc<Vec<(DirEntry, usize)>>,
     _window: &mut Window,
     cx: &mut Context<FileManagerPanel>,
 ) -> AnyElement {
@@ -116,12 +117,15 @@ pub(super) fn render_tile(
                 ClickEvent::Mouse(click) => click.up.modifiers,
                 ClickEvent::Keyboard(_) | ClickEvent::Touch(_) => Default::default(),
             };
+            // The grid paints `grid_rows()`, which is not the list view's row
+            // list once a folder is expanded in place, so the index is resolved
+            // against the grid's own rows.
             if modifiers.control {
-                this.toggle_select(index, cx);
+                this.toggle_select_in(rows.as_slice(), index, cx);
             } else if modifiers.shift {
-                this.select_range(index, cx);
+                this.select_range_in(rows.as_slice(), index, cx);
             } else {
-                this.select_only(index, cx);
+                this.select_only_in(rows.as_slice(), index, cx);
             }
             if event.click_count() >= 2 && !modifiers.control && !modifiers.shift {
                 this.open_entry(clicked_entry.clone(), window, cx);
@@ -136,7 +140,13 @@ pub(super) fn render_tile(
                 if !this.is_selected(&right_click_path) {
                     this.selected.clear();
                     this.selected.push(right_click_path.clone());
-                    this.selection_anchor = Some(index);
+                    // The anchor is an index into the list view's rows (that is
+                    // what shift-click and the keyboard use), so it is looked up
+                    // by path instead of reusing the grid index.
+                    this.selection_anchor = this
+                        .visible_rows()
+                        .iter()
+                        .position(|(entry, _)| entry.path == right_click_path);
                 }
                 if this.rename_state.is_some() {
                     this.cancel_rename(window, cx);

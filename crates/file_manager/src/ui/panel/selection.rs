@@ -64,6 +64,19 @@ impl FileManagerPanel {
         rows
     }
 
+    /// The rows of the icon grid: the entries flat, never the children of a
+    /// folder expanded in the details view.
+    ///
+    /// Nautilus' icon view has no expanders at all (`nautilus-name-cell.c` only
+    /// shows them in the list view), so an expanded folder keeps its children
+    /// out of the grid instead of dropping a tree of tiles in the middle of it.
+    pub(crate) fn grid_rows(&self) -> Vec<(DirEntry, usize)> {
+        self.visible_rows()
+            .into_iter()
+            .filter(|(_, depth)| *depth == 0)
+            .collect()
+    }
+
     /// The "active" selected entry (the one rename operates on).
     pub(crate) fn selected_entry(&self) -> Option<DirEntry> {
         let selected = self.selected.last()?;
@@ -88,6 +101,20 @@ impl FileManagerPanel {
 
     pub(crate) fn select_only(&mut self, index: usize, cx: &mut Context<Self>) {
         let rows = self.visible_rows();
+        self.select_only_in(&rows, index, cx);
+    }
+
+    /// [`Self::select_only`] over a caller-provided row list.
+    ///
+    /// The grid indexes its own (flat) rows, which are not the list view's when
+    /// a folder is expanded, so the index has to be resolved against the rows the
+    /// caller actually painted.
+    pub(crate) fn select_only_in(
+        &mut self,
+        rows: &[(DirEntry, usize)],
+        index: usize,
+        cx: &mut Context<Self>,
+    ) {
         if let Some((entry, _)) = rows.get(index) {
             self.selected.clear();
             self.selected.push(entry.path.clone());
@@ -123,6 +150,16 @@ impl FileManagerPanel {
 
     pub(crate) fn toggle_select(&mut self, index: usize, cx: &mut Context<Self>) {
         let rows = self.visible_rows();
+        self.toggle_select_in(&rows, index, cx);
+    }
+
+    /// [`Self::toggle_select`] over a caller-provided row list.
+    pub(crate) fn toggle_select_in(
+        &mut self,
+        rows: &[(DirEntry, usize)],
+        index: usize,
+        cx: &mut Context<Self>,
+    ) {
         let Some((entry, _)) = rows.get(index) else {
             return;
         };
@@ -141,13 +178,23 @@ impl FileManagerPanel {
 
     pub(crate) fn select_range(&mut self, index: usize, cx: &mut Context<Self>) {
         let rows = self.visible_rows();
+        self.select_range_in(&rows, index, cx);
+    }
+
+    /// [`Self::select_range`] over a caller-provided row list.
+    pub(crate) fn select_range_in(
+        &mut self,
+        rows: &[(DirEntry, usize)],
+        index: usize,
+        cx: &mut Context<Self>,
+    ) {
         let anchor = self.selection_anchor.or_else(|| {
             self.selected
                 .last()
                 .and_then(|path| rows.iter().position(|(entry, _)| &entry.path == path))
         });
         let Some(anchor) = anchor else {
-            self.select_only(index, cx);
+            self.select_only_in(rows, index, cx);
             return;
         };
         self.selected.clear();

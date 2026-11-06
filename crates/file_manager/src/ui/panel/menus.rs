@@ -8,8 +8,10 @@ use gpui::{
     anchored, deferred,
 };
 use ui::prelude::*;
+use workspace::OpenMode;
 
 use super::{DeployedContextMenu, FileManagerPanel};
+use crate::ui::places::is_trash_path;
 use crate::ui::views::ViewMode;
 use crate::{
     Copy, Cut, Delete, NewFile, NewFolder, Open, OpenAsWorkspace, OpenInThisWindow, Paste, Redo,
@@ -217,6 +219,9 @@ impl FileManagerPanel {
         let focus = self.focus_handle.clone();
         let is_bookmark = self.is_bookmarked(&path);
         let location = path.display().to_string();
+        // A place is a folder that can become a workspace root; the Trash is not
+        // one (`Fs::trash` moves files out of it), so it is left out.
+        let can_open_workspace = path.is_dir() && !is_trash_path(&path);
 
         self.deploy_menu(
             position,
@@ -249,9 +254,128 @@ impl FileManagerPanel {
                     })
                 };
 
+                if can_open_workspace {
+                    menu = menu
+                        .separator()
+                        .entry("Open in This Window", None, {
+                            let panel = panel.clone();
+                            let path = path.clone();
+                            move |window, cx| {
+                                panel.update(cx, |state, cx| {
+                                    state.open_path_as_workspace(
+                                        path.clone(),
+                                        OpenMode::Activate,
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            }
+                        })
+                        .entry("Open in New Window", None, {
+                            let panel = panel.clone();
+                            let path = path.clone();
+                            move |window, cx| {
+                                panel.update(cx, |state, cx| {
+                                    state.open_path_as_workspace(
+                                        path.clone(),
+                                        OpenMode::NewWindow,
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            }
+                        });
+                }
+
                 menu.entry("Copy Path", None, move |_, cx| {
                     cx.write_to_clipboard(ClipboardItem::new_string(location.clone()));
                 })
+            },
+            window,
+            cx,
+        );
+    }
+
+    /// The context menu of a folder-tree row.
+    ///
+    /// The tree had no menu at all, so a folder found there could not be opened
+    /// as a workspace without first opening it in the folder view.
+    pub(crate) fn deploy_tree_menu(
+        &mut self,
+        path: std::path::PathBuf,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let panel = cx.entity();
+        let focus = self.focus_handle.clone();
+        let location = path.display().to_string();
+        let is_bookmark = self.is_bookmarked(&path);
+        let bookmark_label = if is_bookmark {
+            "Remove from Bookmarks"
+        } else {
+            "Add to Bookmarks"
+        };
+
+        self.deploy_menu(
+            position,
+            move |menu, _, _| {
+                menu.context(focus)
+                    .entry("Open", None, {
+                        let panel = panel.clone();
+                        let path = path.clone();
+                        move |window, cx| {
+                            panel.update(cx, |state, cx| {
+                                state.navigate_to(path.clone(), window, cx);
+                            });
+                        }
+                    })
+                    .separator()
+                    .entry("Open in This Window", None, {
+                        let panel = panel.clone();
+                        let path = path.clone();
+                        move |window, cx| {
+                            panel.update(cx, |state, cx| {
+                                state.open_path_as_workspace(
+                                    path.clone(),
+                                    OpenMode::Activate,
+                                    window,
+                                    cx,
+                                );
+                            });
+                        }
+                    })
+                    .entry("Open in New Window", None, {
+                        let panel = panel.clone();
+                        let path = path.clone();
+                        move |window, cx| {
+                            panel.update(cx, |state, cx| {
+                                state.open_path_as_workspace(
+                                    path.clone(),
+                                    OpenMode::NewWindow,
+                                    window,
+                                    cx,
+                                );
+                            });
+                        }
+                    })
+                    .separator()
+                    .entry(bookmark_label, None, {
+                        let panel = panel.clone();
+                        let path = path.clone();
+                        move |_, cx| {
+                            panel.update(cx, |state, cx| {
+                                if is_bookmark {
+                                    state.remove_bookmark(&path, cx);
+                                } else {
+                                    state.add_bookmark(path.clone(), cx);
+                                }
+                            });
+                        }
+                    })
+                    .entry("Copy Path", None, move |_, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(location.clone()));
+                    })
             },
             window,
             cx,

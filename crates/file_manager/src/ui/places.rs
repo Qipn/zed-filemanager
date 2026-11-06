@@ -195,6 +195,14 @@ pub(crate) fn build_places(
 }
 
 /// The icon of a quick-access folder.
+/// Whether `path` is the Trash folder shown in the sidebar.
+///
+/// The Trash is a place like any other, but nothing in it should be turned into
+/// a workspace root, so the sidebar menus need to tell it apart.
+pub(crate) fn is_trash_path(path: &Path) -> bool {
+    path.ends_with(".local/share/Trash/files")
+}
+
 fn user_dir_icon(kind: UserDir) -> IconName {
     match kind {
         UserDir::Desktop => IconName::Folder,

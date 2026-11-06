@@ -766,6 +766,69 @@ async fn test_render_grid_and_details_pane(cx: &mut TestAppContext) {
     });
 }
 
+/// The icon grid never shows the children of a folder expanded in place.
+///
+/// Nautilus' icon view has no expanders, so an expanded folder in the details
+/// view used to spill a tree of tiles into the grid.
+#[gpui::test]
+async fn test_grid_hides_expanded_children(cx: &mut TestAppContext) {
+    init_globals(cx);
+
+    let fs = fs::FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/home/alice",
+        serde_json::json!({ "projects": { "demo": {}, "other": {} } }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), ["/home/alice".as_ref()], cx).await;
+    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        FileManagerPanel::new(workspace, window, cx)
+    });
+    let window = cx.update(|_window, cx| {
+        cx.open_window(WindowOptions::default(), |_window, _cx| panel.clone())
+            .expect("failed to open the test window")
+    });
+    let window = window.into();
+    // Let the initial directory load finish, so `toggle_entry_expanded` has
+    // something to expand.
+    cx.background_executor.run_until_parked();
+    panel.read_with(cx, |panel, _cx| {
+        assert!(!panel.entries.is_empty(), "the folder must be loaded");
+    });
+
+    // Expand `projects` the way the details view's chevron does.
+    cx.update_window(window, |_, window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.toggle_entry_expanded(std::path::Path::new("/home/alice/projects"), window, cx);
+        });
+    })
+    .unwrap();
+    cx.background_executor.run_until_parked();
+
+    panel.read_with(cx, |panel, _cx| {
+        let visible = panel.visible_rows();
+        assert!(
+            visible.iter().any(|(entry, depth)| *depth > 0),
+            "the list view shows the children, rows: {:?}",
+            visible
+                .iter()
+                .map(|(entry, depth)| (entry.name.to_string(), *depth))
+                .collect::<Vec<_>>()
+        );
+
+        let grid = panel.grid_rows();
+        assert!(
+            grid.iter().all(|(_, depth)| *depth == 0),
+            "the grid only shows the top level, rows: {:?}",
+            grid.iter()
+                .map(|(entry, depth)| (entry.name.to_string(), *depth))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(grid.len(), panel.entries.len());
+    });
+}
+
 /// `Open as Workspace` acts on the selected folder, and on the folder being
 /// browsed when the selection is empty or not a folder.
 #[gpui::test]

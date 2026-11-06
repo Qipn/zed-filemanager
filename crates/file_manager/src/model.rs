@@ -11,6 +11,7 @@ pub(crate) mod bookmarks;
 pub(crate) mod clipboard;
 pub(crate) mod conflict;
 pub(crate) mod entries;
+pub(crate) mod fs_space;
 pub(crate) mod search;
 pub(crate) mod tree;
 pub(crate) mod undo;

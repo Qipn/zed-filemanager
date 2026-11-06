@@ -291,6 +291,7 @@ fn render_tree(
         let chevron_path = node.path.clone();
         let label = node.name.clone();
         let expanded = node.expanded;
+        let menu_path = node.path.clone();
 
         list = list.child(
             h_flex()
@@ -353,6 +354,15 @@ fn render_tree(
                     MouseButton::Left,
                     cx.listener(move |this, _event: &MouseDownEvent, window, cx| {
                         this.navigate_to(path.clone(), window, cx);
+                        cx.stop_propagation();
+                    }),
+                )
+                // Right click opens the row's menu: open it, open it as a
+                // workspace (this window or a new one), bookmark it.
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                        this.deploy_tree_menu(menu_path.clone(), event.position, window, cx);
                         cx.stop_propagation();
                     }),
                 ),

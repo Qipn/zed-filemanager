@@ -120,6 +120,8 @@ pub(crate) struct OxPalette {
     pub(crate) selected: Hsla,
     /// Field background (address bar).
     pub(crate) field_bg: Hsla,
+    /// Warning colour (a nearly full drive).
+    pub(crate) danger: Hsla,
 }
 
 impl OxPalette {
@@ -141,6 +143,7 @@ impl OxPalette {
             // OpenXplorer selects rows with a soft blue tint (C19).
             selected: colors.element_selected,
             field_bg: colors.element_background,
+            danger: theme.status().error,
         }
     }
 }

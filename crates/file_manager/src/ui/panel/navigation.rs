@@ -105,7 +105,20 @@ impl FileManagerPanel {
         let Some(directory) = self.workspace_target() else {
             return;
         };
+        self.open_path_as_workspace(directory, mode, window, cx);
+    }
 
+    /// Opens `directory` as a workspace with the given mode.
+    ///
+    /// Used by the context menus of the sidebar rows, which act on the row's own
+    /// path instead of the folder view's selection.
+    pub(crate) fn open_path_as_workspace(
+        &mut self,
+        directory: PathBuf,
+        mode: OpenMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.workspace
             .update(cx, |workspace, cx| {
                 workspace.open_workspace_for_paths(mode, vec![directory], window, cx)

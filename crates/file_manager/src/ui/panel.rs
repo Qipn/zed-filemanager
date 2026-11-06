@@ -177,6 +177,9 @@ pub struct FileManagerPanel {
     /// The width the panel was last laid out at, used for the responsive
     /// breakpoints. `None` until the first frame.
     pub(crate) content_width: Option<f32>,
+    /// Total and available bytes of the drive that holds the current folder, for
+    /// the status bar's capacity bar (`None` while unknown or remote).
+    pub(crate) disk_space: Option<(u64, u64)>,
 }
 
 // The drag payloads live in their own module; re-exported so the views keep
@@ -255,6 +258,7 @@ impl FileManagerPanel {
             tree_scroll: ScrollHandle::new(),
             last_revealed: None,
             content_width: None,
+            disk_space: None,
         });
 
         panel.update(cx, |panel, cx| {
@@ -408,6 +412,10 @@ impl FileManagerPanel {
         let Some(directory) = self.current_dir.clone() else {
             return;
         };
+
+        // The capacity bar of the status bar describes this drive. `statvfs` is a
+        // single cheap syscall, so it is read here rather than on every frame.
+        self.disk_space = crate::model::fs_space::space_for(&directory);
 
         self.loading_generation = self.loading_generation.wrapping_add(1);
         let generation = self.loading_generation;
