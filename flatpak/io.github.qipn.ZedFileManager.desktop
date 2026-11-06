@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Zed File Manager
+GenericName=Text Editor
+Comment=Zed fork with a GNOME Files style file manager panel
+TryExec=zed
+StartupNotify=false
+Exec=zed --foreground %U
+Icon=io.github.qipn.ZedFileManager
+Categories=Utility;TextEditor;Development;IDE;
+Keywords=zed;filemanager;
+MimeType=text/plain;application/x-zerosize;x-scheme-handler/zed;inode/directory;

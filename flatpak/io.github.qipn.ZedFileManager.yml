@@ -1,0 +1,57 @@
+# Local Flatpak for this fork.
+#
+# It packages an **already built** `zed` binary instead of compiling inside the
+# sandbox: the binary's direct dependencies (glib/gio, freetype, alsa, xcb,
+# xkbcommon, libstdc++) are all in `org.freedesktop.Platform`, and the rest
+# (wayland, vulkan, libva, …) is loaded with `dlopen` from that runtime. That
+# keeps the flatpak build a couple of seconds instead of an hour, and avoids
+# needing the Rust toolchain inside the SDK.
+#
+# `script/build-flatpak` stages `build-input/zed` and `build-input/app-icon.png`
+# and then runs `flatpak-builder` on this file.
+
+app-id: io.github.qipn.ZedFileManager
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+command: zed
+separate-locales: false
+
+finish-args:
+  - --device=dri
+  - --share=ipc
+  - --share=network
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --socket=pulseaudio
+  - --filesystem=home
+  # The binary is built on the host (NixOS), so its ELF interpreter and RUNPATH
+  # point into `/nix/store`. The sandbox does not expose that path by default,
+  # and without it the loader cannot be found (`bwrap: execvp zed: No such file
+  # or directory`). Mounting it read-only is what makes a host-built binary
+  # runnable here; it does widen the sandbox, which is the price of not
+  # rebuilding Zed inside the SDK.
+  - --filesystem=/nix/store:ro
+  # Zed uses git heavily: credential prompts and ssh signing go through these.
+  - --talk-name=org.freedesktop.secrets
+  - --socket=ssh-auth
+  - --socket=gpg-agent
+  - --env=ZED_UPDATE_EXPLANATION=This is a local build; rebuild it with script/build-flatpak
+
+modules:
+  - name: zed
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 zed ${FLATPAK_DEST}/bin/zed
+      - install -Dm644 ${FLATPAK_ID}.desktop ${FLATPAK_DEST}/share/applications/${FLATPAK_ID}.desktop
+      - install -Dm644 ${FLATPAK_ID}.metainfo.xml ${FLATPAK_DEST}/share/metainfo/${FLATPAK_ID}.metainfo.xml
+      - install -Dm644 app-icon.png ${FLATPAK_DEST}/share/icons/hicolor/512x512/apps/${FLATPAK_ID}.png
+    sources:
+      - type: file
+        path: build-input/zed
+      - type: file
+        path: build-input/app-icon.png
+      - type: file
+        path: io.github.qipn.ZedFileManager.desktop
+      - type: file
+        path: io.github.qipn.ZedFileManager.metainfo.xml

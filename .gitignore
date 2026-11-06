@@ -66,3 +66,8 @@ crates/docs_preprocessor/actions.json
 # Zed 构建所需的 WebRTC 预编译包（131 MB，由 script/build-zed 解压到 target/）
 /webrtc-linux-x64-release.zip
 /webrtc-*.zip
+
+# Local Flatpak packaging inputs/build dirs
+flatpak/build/
+flatpak/build-input/
+flatpak/.builder/

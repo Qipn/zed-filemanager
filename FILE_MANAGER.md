@@ -130,6 +130,41 @@ cargo run -p zed
 
 首次构建需要约 15–25 GB 磁盘；可用 `CARGO_PROFILE_DEV_DEBUG=0` 显著压小体积。
 
+### 打包成 Flatpak 安装到本地
+
+```bash
+script/build-flatpak            # 需要时就先 script/build-zed --release，再打包并安装
+script/build-flatpak --skip-build   # 用现有 target/release/zed
+script/build-flatpak --bundle       # 额外导出 target/release/io.github.qipn.ZedFileManager.flatpak
+flatpak run io.github.qipn.ZedFileManager
+```
+
+装好后也能从应用网格"Zed File Manager"启动（`.desktop` + 图标 + metainfo 都装进去了）。
+
+清单在 `flatpak/io.github.qipn.ZedFileManager.yml`，要点：
+
+- **不在沙箱里编译**：`zed` 的直接依赖（glib/gio、freetype、alsa、xcb、xkbcommon、libstdc++）
+  都在 `org.freedesktop.Platform` 里，其余（wayland/vulkan/libva…）是运行时 dlopen，
+  所以直接打包已编译的二进制，构建只要几秒；代价是不用 SDK 里的 Rust 工具链
+- **NixOS 特有**：宿主机构建的二进制，ELF 解释器与 RUNPATH 都指向 `/nix/store`，
+  沙箱默认看不到 → 会报 `bwrap: execvp zed: No such file or directory`。
+  清单里加了 `--filesystem=/nix/store:ro` 让它能解析（沙箱因此变宽，这是不在沙箱内
+  重编译的代价）
+- app id 用 `io.github.qipn.ZedFileManager`（与上游 Flathub 的 `dev.zed.Zed` 区分开）
+- desktop 的 `Exec` 用 `zed --foreground %U`；编辑器二进制**不认 `--new`**（那是 CLI 的参数），
+  所以没有单独的"New Workspace"动作
+- 依赖 `org.freedesktop.Sdk//24.08` 与 `org.freedesktop.Platform//24.08`：
+  `flatpak install flathub org.freedesktop.Sdk//24.08`
+- `flatpak/build/`、`flatpak/build-input/`、`flatpak/.builder/` 已在 `.gitignore`
+
+快速自检（不编译 Zed，验证清单/运行时/安装链路）：
+
+```bash
+script/build-flatpak --binary /run/current-system/sw/bin/true
+flatpak run io.github.qipn.ZedFileManager   # 桩程序会报 “unknown program 'zed'”，说明能执行
+flatpak uninstall -y io.github.qipn.ZedFileManager
+```
+
 ---
 
 ## 4. 测试

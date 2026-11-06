@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# Purpose: build a local Flatpak of this Zed fork and install it for the current
+# user, so the file manager panel can be launched from the app grid instead of
+# from `target/debug/zed`.
+#
+# Usage:
+#   script/build-flatpak                  # build the release binary if needed, then package
+#   script/build-flatpak --skip-build     # package the existing target/release/zed
+#   script/build-flatpak --binary PATH    # package an explicit binary (smoke tests)
+#   script/build-flatpak --bundle         # also write target/release/<id>.flatpak
+#   script/build-flatpak --manifest-only  # stop after staging the inputs
+#
+# Why the binary is built outside the sandbox:
+#   Compiling Zed inside `flatpak-builder` needs the Rust toolchain in the SDK,
+#   a network-enabled build sandbox (webrtc-sys downloads its prebuilt archive)
+#   and a long dependency chain. Packaging the binary we already build with
+#   `script/build-zed` is a couple of seconds, and its dynamic dependencies are
+#   in `org.freedesktop.Platform` (see flatpak/io.github.qipn.ZedFileManager.yml).
+#
+# Created: 2026-11-07
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+APP_ID=io.github.qipn.ZedFileManager
+MANIFEST="flatpak/$APP_ID.yml"
+BUILD_DIR="flatpak/build"
+STATE_DIR="flatpak/.builder"
+BUILD_INPUT="flatpak/build-input"
+
+SKIP_BUILD=0
+BINARY=""
+WRITE_BUNDLE=0
+MANIFEST_ONLY=0
+
+usage() {
+    cat <<'EOF'
+Usage: script/build-flatpak [options]
+
+Options:
+  --skip-build      do not run script/build-zed; use target/release/zed
+  --binary PATH     package this binary instead of target/release/zed
+  --bundle          also export target/release/<app-id>.flatpak
+  --manifest-only   stage the inputs and stop (no flatpak-builder run)
+  -h, --help        show this help
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --skip-build) SKIP_BUILD=1; shift ;;
+        --binary) BINARY="$2"; shift 2 ;;
+        --bundle) WRITE_BUNDLE=1; shift ;;
+        --manifest-only) MANIFEST_ONLY=1; shift ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "error: unknown argument '$1'" >&2; usage; exit 1 ;;
+    esac
+done
+
+for tool in flatpak flatpak-builder; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+        echo "error: $tool is required (NixOS: nix-shell -p flatpak flatpak-builder)" >&2
+        exit 1
+    fi
+done
+
+if [[ -z "$BINARY" ]]; then
+    if [[ "$SKIP_BUILD" != 1 ]]; then
+        echo "building the release binary (this takes a while on a cold target dir)..."
+        script/build-zed --release
+    fi
+    BINARY="target/release/zed"
+fi
+
+if [[ ! -f "$BINARY" ]]; then
+    echo "error: $BINARY does not exist." >&2
+    echo "hint: run script/build-zed --release, or pass --binary <path>." >&2
+    exit 1
+fi
+
+echo "staging $BINARY"
+rm -rf "$BUILD_INPUT"
+mkdir -p "$BUILD_INPUT"
+install -Dm755 "$BINARY" "$BUILD_INPUT/zed"
+install -Dm644 crates/zed/resources/app-icon.png "$BUILD_INPUT/app-icon.png"
+
+if [[ "$MANIFEST_ONLY" == 1 ]]; then
+    echo "inputs staged in $BUILD_INPUT; not running flatpak-builder"
+    exit 0
+fi
+
+# `org.freedesktop.Platform` / `Sdk` 24.08 come from Flathub; make sure they are
+# present before flatpak-builder tries to use them.
+if ! flatpak list --runtime --columns=application,branch | grep -qE "^org\.freedesktop\.Sdk[[:space:]]+24\.08$"; then
+    echo "error: org.freedesktop.Sdk//24.08 is not installed." >&2
+    echo "hint: flatpak install flathub org.freedesktop.Sdk//24.08 org.freedesktop.Platform//24.08" >&2
+    exit 1
+fi
+
+flatpak-builder \
+    --user \
+    --install \
+    --force-clean \
+    --state-dir="$STATE_DIR" \
+    "$BUILD_DIR" \
+    "$MANIFEST"
+
+if [[ "$WRITE_BUNDLE" == 1 ]]; then
+    repo="${XDG_DATA_HOME:-$HOME/.local/share}/flatpak/repo"
+    bundle="target/release/$APP_ID.flatpak"
+    mkdir -p target/release
+    flatpak build-bundle "$repo" "$bundle" "$APP_ID" --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo
+    echo "wrote $bundle"
+fi
+
+cat <<EOF
+
+Installed '$APP_ID'. Launch it with:
+  flatpak run $APP_ID
+or from the desktop's application grid ("Zed File Manager").
+EOF
