@@ -8,10 +8,10 @@ use gpui::{Context, MouseButton, MouseDownEvent, SharedString, Window, div, px};
 use theme::ActiveTheme;
 use ui::{Color, Icon, IconSize, Label, LabelSize, prelude::*};
 
-use crate::ox_theme::{metrics, palette};
-use crate::panel::FileManagerPanel;
-use crate::places::PlaceSection;
-use crate::tree;
+use crate::model::tree;
+use crate::ui::ox_theme::{metrics, palette};
+use crate::ui::panel::FileManagerPanel;
+use crate::ui::places::PlaceSection;
 
 /// Renders the sidebar: places list on top, folder tree below.
 pub(crate) fn render_sidebar(
@@ -165,6 +165,8 @@ fn render_tree(
                             "file-manager-tree-chevron-{}",
                             node.path.display()
                         )))
+                        // A block container would ignore `items_center`.
+                        .flex()
                         .w(px(16.))
                         .h(px(16.))
                         .flex_shrink_0()

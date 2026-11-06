@@ -5,32 +5,27 @@
 //! items to the Trash or deletes them. It uses Zed's `Project`/`Fs` APIs so it
 //! works with the same local and remote worktrees as the rest of the editor.
 //!
-//! Module layout:
-//! - [`panel`]: the `FileManagerPanel` entity and its `Panel` implementation.
-//! - [`render`]: the view layer, laid out like OpenXplorer.
-//! - [`views`]: the details view and the icon grid.
-//! - [`sidebar`]: the places list and the folder tree.
-//! - [`entries`]: directory listing.
-//! - [`clipboard`]: the panel clipboard and file-operation helpers.
-//! - [`conflict`]: name-conflict resolution for paste, cut and drag & drop.
-//! - [`details_pane`]: the details pane on the right of the folder view.
-//! - [`places`]: the "Places" list of the sidebar.
-//! - [`tree`]: the folder tree of the sidebar.
-//! - [`ox_theme`]: the OpenXplorer design tokens (metrics and palette).
-//! - [`undo`]: the undo/redo history.
+//! Module layout, split like the rest of the workspace into a model layer and
+//! a view layer:
+//!
+//! - [`model`]: data and rules, no UI entities.
+//!   - [`model::entries`]: directory listing (`DirEntry`, `SortMode`).
+//!   - [`model::search`]: recursive search over the current folder.
+//!   - [`model::tree`]: the folder tree nodes.
+//!   - [`model::clipboard`]: the panel clipboard and file-operation helpers.
+//!   - [`model::conflict`]: name-conflict resolution for paste and drag.
+//!   - [`model::undo`]: the undo/redo history.
+//! - [`ui`]: the `gpui` layer.
+//!   - [`ui::panel`]: the `FileManagerPanel` entity and its `Panel` impl.
+//!   - [`ui::render`]: the OpenXplorer layout.
+//!   - [`ui::views`]: the details view and the icon grid.
+//!   - [`ui::sidebar`]: the places list and the folder tree.
+//!   - [`ui::details_pane`]: the details pane on the right.
+//!   - [`ui::places`]: the "Places" entries of the sidebar.
+//!   - [`ui::ox_theme`]: the OpenXplorer design tokens.
 
-mod clipboard;
-mod conflict;
-mod details_pane;
-mod entries;
-mod ox_theme;
-mod panel;
-mod places;
-mod render;
-mod sidebar;
-mod tree;
-mod undo;
-mod views;
+mod model;
+mod ui;
 
 #[cfg(test)]
 mod tests;
@@ -40,7 +35,7 @@ use std::path::PathBuf;
 use gpui::{App, Context, Window, actions};
 use workspace::Workspace;
 
-pub use panel::FileManagerPanel;
+pub use ui::FileManagerPanel;
 
 actions!(
     file_manager,
@@ -79,6 +74,10 @@ actions!(
         ToggleSidebar,
         /// Switches between the details view and the icon grid.
         ToggleViewMode,
+        /// Opens or closes the search mode in the location slot.
+        ToggleSearch,
+        /// Turns the location slot into the editable path field.
+        EditLocation,
     ]
 );
 

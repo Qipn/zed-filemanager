@@ -12,7 +12,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use fs::{Fs, RemoveOptions, RenameOptions};
 
-use crate::clipboard::copy_entry;
+use crate::model::clipboard::copy_entry;
 
 /// What to do when the destination already contains an entry with the same
 /// name.

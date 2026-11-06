@@ -14,9 +14,9 @@ use gpui::{
 use theme::ActiveTheme;
 use ui::{Color, Icon, IconName, IconSize, Label, LabelSize, prelude::*, rems_from_px};
 
-use crate::entries::DirEntry;
-use crate::ox_theme::{metrics, palette};
-use crate::panel::{DragGhost, DraggedPaths, FileManagerPanel};
+use crate::model::entries::DirEntry;
+use crate::ui::ox_theme::{metrics, palette};
+use crate::ui::panel::{DragGhost, DraggedPaths, FileManagerPanel};
 
 /// How the contents of the current directory are shown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -55,9 +55,9 @@ pub(crate) fn render_column_header(
         if active {
             // The caret points up for ascending order, down for descending.
             let icon = match sort_mode {
-                crate::entries::SortMode::NameAscending
-                | crate::entries::SortMode::ModifiedAscending
-                | crate::entries::SortMode::SizeAscending => IconName::ChevronUp,
+                crate::model::entries::SortMode::NameAscending
+                | crate::model::entries::SortMode::ModifiedAscending
+                | crate::model::entries::SortMode::SizeAscending => IconName::ChevronUp,
                 _ => IconName::ChevronDown,
             };
             header = header.child(
@@ -71,7 +71,11 @@ pub(crate) fn render_column_header(
 
     h_flex()
         .id("file-manager-column-header")
-        .flex_1()
+        // The header is a fixed-height band. `flex_1()` here would grow along
+        // the parent `v_flex`'s vertical axis and swallow the list.
+        .h(px(metrics::COLUMN_HEADER))
+        .w_full()
+        .flex_shrink_0()
         .border_b_1()
         .border_color(palette.divider)
         .child(
@@ -140,7 +144,13 @@ pub(crate) fn render_view(
 
     let rows = this.visible_rows();
     if rows.is_empty() {
-        let message = if this.search_query.as_ref().is_some_and(|q| !q.is_empty()) {
+        let message = if this.is_searching() {
+            if this.search_running {
+                "Searching…"
+            } else {
+                "No results"
+            }
+        } else if this.search_query.as_ref().is_some_and(|q| !q.is_empty()) {
             "No matching items"
         } else {
             "This folder is empty"
@@ -155,6 +165,9 @@ pub(crate) fn render_view(
         ViewMode::Details => v_flex()
             .id("file-manager-details")
             .flex_1()
+            // Without `min_h(0)` the column cannot shrink below its content,
+            // so the list would be clipped instead of scrolled.
+            .min_h(px(0.))
             .child(render_column_header(this, cx))
             .child(render_details_list(this, window, cx))
             .into_any_element(),
@@ -182,6 +195,13 @@ fn render_details_list(
                 .collect()
         }),
     )
+    // Same shape as `extensions_ui` / `agent_registry_ui`: the flex parent
+    // gives the list a definite height and the list scrolls its own overflow.
+    // `min_h(0)` lets it shrink below its content — without it the automatic
+    // minimum size keeps the list at content height, so it overflows the pane
+    // and the wheel has nothing to scroll.
+    .flex_grow_1()
+    .min_h(px(0.))
     .into_any_element()
 }
 
@@ -243,7 +263,7 @@ fn render_details_row(
     h_flex()
         .id(("file-manager-entry", index))
         .h(px(metrics::ROW_PITCH))
-        .flex_1()
+        .w_full()
         .px(px(metrics::COLUMN_EDGE_PADDING))
         .border_b_1()
         .border_color(palette.divider)
@@ -358,7 +378,7 @@ fn render_details_row(
                     Label::new(
                         entry
                             .len
-                            .map(crate::entries::format_len)
+                            .map(crate::model::entries::format_len)
                             .unwrap_or_default(),
                     )
                     .single_line()
@@ -498,6 +518,10 @@ fn render_icon_grid(
                 .collect()
         }),
     )
+    // See `render_details_list`: the flex parent sizes the list and the list
+    // scrolls its own overflow.
+    .flex_grow_1()
+    .min_h(px(0.))
     .into_any_element()
 }
 
@@ -544,6 +568,9 @@ fn render_tile(
         })
         .child(
             div()
+                // The tile centres its icon and label; `flex_col()` alone
+                // leaves the display mode at block, which ignores the centring.
+                .flex()
                 .flex_1()
                 .w_full()
                 .flex_col()

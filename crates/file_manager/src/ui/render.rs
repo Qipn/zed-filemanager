@@ -23,14 +23,14 @@ use ui::{
     TintColor, Tooltip, prelude::*,
 };
 
-use crate::clipboard::Clipboard;
-use crate::conflict::ConflictPolicy;
-use crate::ox_theme::{metrics, palette};
-use crate::panel::FileManagerPanel;
-use crate::views::{ViewMode, render_view};
+use crate::model::clipboard::Clipboard;
+use crate::model::conflict::ConflictPolicy;
+use crate::ui::ox_theme::{metrics, palette};
+use crate::ui::panel::FileManagerPanel;
+use crate::ui::views::{ViewMode, render_view};
 use crate::{
-    Copy, Cut, Delete, NewFile, NewFolder, Open, OpenContextMenu, Paste, Redo, Refresh, Rename,
-    ToggleSidebar, ToggleViewMode, Trash, Undo,
+    Copy, Cut, Delete, EditLocation, NewFile, NewFolder, Open, OpenContextMenu, Paste, Redo,
+    Refresh, Rename, ToggleSearch, ToggleSidebar, ToggleViewMode, Trash, Undo,
 };
 
 /// Renders the whole panel.
@@ -41,6 +41,8 @@ pub(super) fn render(
 ) -> impl IntoElement {
     v_flex()
         .size_full()
+        // The rows of the folder view must never paint outside the panel.
+        .overflow_hidden()
         .key_context("FileManagerPanel")
         .bg(cx.theme().colors().panel_background)
         .track_focus(&this.focus_handle)
@@ -54,8 +56,8 @@ pub(super) fn render(
         // Zed's dock (`crates/workspace/src/dock.rs`): the handle only starts a
         // drag and the panel resizes on every drag move, so releasing the mouse
         // always ends the resize.
-        .on_drag_move::<crate::panel::SidebarResizeDrag>(cx.listener(
-            |this, event: &gpui::DragMoveEvent<crate::panel::SidebarResizeDrag>, _, cx| {
+        .on_drag_move::<crate::ui::panel::SidebarResizeDrag>(cx.listener(
+            |this, event: &gpui::DragMoveEvent<crate::ui::panel::SidebarResizeDrag>, _, cx| {
                 let width = f32::from(event.event.position.x - event.bounds.left());
                 this.set_sidebar_width(width, cx);
             },
@@ -105,11 +107,17 @@ pub(super) fn render(
         .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| {
             this.toggle_sidebar(cx);
         }))
+        .on_action(cx.listener(|this, _: &ToggleSearch, _, cx| {
+            this.toggle_search(cx);
+        }))
+        .on_action(cx.listener(|this, _: &EditLocation, _, cx| {
+            this.begin_path_edit(cx);
+        }))
         .on_action(cx.listener(|this, _: &ToggleViewMode, _, cx| {
             this.set_view_mode(
                 match this.view_mode {
-                    crate::views::ViewMode::Details => crate::views::ViewMode::Grid,
-                    crate::views::ViewMode::Grid => crate::views::ViewMode::Details,
+                    crate::ui::views::ViewMode::Details => crate::ui::views::ViewMode::Grid,
+                    crate::ui::views::ViewMode::Grid => crate::ui::views::ViewMode::Details,
                 },
                 cx,
             );
@@ -186,63 +194,85 @@ fn render_navigation_row(
                 .disabled(this.current_dir.is_none())
                 .on_click(cx.listener(|this, _, window, cx| this.refresh(window, cx))),
         )
-        .child(render_address_bar(this, cx))
-        .children(if this.is_search_box_shown() {
-            Some(render_search_box(this, cx))
-        } else {
-            None
-        })
+        .child(render_location_slot(this, cx))
+        // The magnifier opens the search mode; while searching, the slot
+        // itself carries the close button (like GNOME Files). It is always
+        // shown: the old width gate hid it in a narrow dock, which made the
+        // search unreachable.
+        .child(render_search_toggle(this, cx))
         .into_any_element()
 }
 
-/// The search box at the right of the navigation row.
+/// The shared location slot of the navigation row.
 ///
-/// OpenXplorer searches the whole location tree; the panel filters the
-/// contents of the current directory instead.
-fn render_search_box(this: &FileManagerPanel, cx: &mut Context<FileManagerPanel>) -> AnyElement {
-    let palette = palette(cx.theme());
-
-    match &this.search_query {
-        Some(query) => div()
-            .id("file-manager-search-box")
-            .h(px(32.))
-            .w(px(metrics::SEARCH_WIDTH))
-            .flex_shrink_0()
-            .px(px(8.))
-            .items_center()
-            .gap(px(6.))
-            .rounded_xs()
-            .bg(palette.field_bg)
-            .border_1()
-            .border_color(palette.border)
-            .child(
-                Icon::new(IconName::MagnifyingGlass)
-                    .size(IconSize::XSmall)
-                    .color(Color::Custom(palette.muted)),
-            )
-            .child(
-                Label::new(SharedString::from(format!("{query}|")))
-                    .single_line()
-                    .truncate()
-                    .flex_1(),
-            )
-            .child(
-                IconButton::new("file-manager-search-close", IconName::Close)
-                    .icon_size(IconSize::XSmall)
-                    .tooltip(Tooltip::text("Close the search"))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.toggle_search(cx);
-                    })),
-            )
-            .into_any_element(),
-        None => IconButton::new("file-manager-search", IconName::MagnifyingGlass)
-            .icon_size(IconSize::Small)
-            .tooltip(Tooltip::text("Search"))
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.toggle_search(cx);
-            }))
-            .into_any_element(),
+/// GNOME Files (Nautilus) uses a single field for three modes instead of an
+/// address box plus a separate search box: the breadcrumb path, the editable
+/// location, and the search query. The panel does the same: the slot shows the
+/// search while `search_query` is set, the editable path while `path_edit` is
+/// set, and the breadcrumbs otherwise.
+fn render_location_slot(this: &FileManagerPanel, cx: &mut Context<FileManagerPanel>) -> AnyElement {
+    if this.search_query.is_some() {
+        render_search_field(this, cx)
+    } else {
+        render_address_bar(this, cx)
     }
+}
+
+/// The search mode of the location slot.
+fn render_search_field(this: &FileManagerPanel, cx: &mut Context<FileManagerPanel>) -> AnyElement {
+    let palette = palette(cx.theme());
+    let query = this.search_query.clone().unwrap_or_default();
+
+    div()
+        .id("file-manager-search-box")
+        // `div()` is `display: Block` by default, so `items_center()` alone
+        // would be ignored and the icon, label and button would stack
+        // vertically. `.flex()` defaults to a row.
+        .flex()
+        .h(px(32.))
+        .flex_1()
+        .min_w(px(140.))
+        .px(px(8.))
+        .items_center()
+        .gap(px(6.))
+        .rounded_xs()
+        .bg(palette.field_bg)
+        // Searching is a focused mode, so the field shows the accent edge
+        // like Nautilus' search entry.
+        .border_1()
+        .border_color(palette.accent)
+        .child(
+            Icon::new(IconName::MagnifyingGlass)
+                .size(IconSize::XSmall)
+                .color(Color::Custom(palette.muted)),
+        )
+        .child(
+            Label::new(SharedString::from(format!("{query}|")))
+                .single_line()
+                .truncate()
+                .flex_1(),
+        )
+        .child(
+            IconButton::new("file-manager-search-close", IconName::Close)
+                .icon_size(IconSize::XSmall)
+                .tooltip(Tooltip::text("Close the search (Esc)"))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.toggle_search(cx);
+                })),
+        )
+        .into_any_element()
+}
+
+/// The magnifier button that opens the search mode.
+fn render_search_toggle(this: &FileManagerPanel, cx: &mut Context<FileManagerPanel>) -> AnyElement {
+    let _ = this;
+    IconButton::new("file-manager-search", IconName::MagnifyingGlass)
+        .icon_size(IconSize::Small)
+        .tooltip(Tooltip::text("Search (Ctrl+F)"))
+        .on_click(cx.listener(|this, _, _, cx| {
+            this.toggle_search(cx);
+        }))
+        .into_any_element()
 }
 
 /// The address bar: the breadcrumb path, or the edit field.
@@ -252,6 +282,7 @@ fn render_address_bar(this: &FileManagerPanel, cx: &mut Context<FileManagerPanel
     if let Some(buffer) = &this.path_edit {
         return div()
             .id("file-manager-address-edit")
+            .flex()
             .h(px(32.))
             .flex_1()
             .min_w(px(140.))
@@ -310,6 +341,9 @@ fn render_address_bar(this: &FileManagerPanel, cx: &mut Context<FileManagerPanel
 
     div()
         .id("file-manager-address")
+        // See the search box: a block container ignores `items_center()` and
+        // stacks the icon, the crumbs and the edit button vertically.
+        .flex()
         .h(px(32.))
         .flex_1()
         .min_w(px(140.))
@@ -469,12 +503,14 @@ fn command_button(
     label: impl Into<SharedString>,
     tooltip: SharedString,
     disabled: bool,
-    palette: &crate::ox_theme::OxPalette,
+    palette: &crate::ui::ox_theme::OxPalette,
     on_click: impl Fn(&MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
 ) -> impl IntoElement {
     div()
         .id(id)
         .tooltip(Tooltip::text(tooltip))
+        // A block container would stack the label above the chevron.
+        .flex()
         .h(px(34.))
         .px(px(11.))
         .items_center()
@@ -503,23 +539,34 @@ fn render_body(
     let content = v_flex()
         .id("file-manager-content")
         .flex_1()
+        // `min_h(0)` lets the column shrink below its content height, which is
+        // what makes the list inside scroll instead of overflowing.
+        .min_h(px(0.))
         .min_w(px(0.))
+        // Fill the body height: the body row centres its children by default
+        // (`ui::h_flex()` sets `items_center()`), which would float a
+        // content-sized list in the middle of the panel.
+        .h_full()
         .overflow_hidden()
         .child(
             v_flex()
                 .id("file-manager-entries-wrapper")
                 .flex_1()
+                .min_h(px(0.))
                 .overflow_hidden()
                 // Like Zed's project_panel, the whole pane lights up with
                 // `drop_target_background` when files are dragged over it.
-                .drag_over::<crate::panel::DraggedPaths>(|style, _, _, cx| {
+                .drag_over::<crate::ui::panel::DraggedPaths>(|style, _, _, cx| {
                     style.bg(cx.theme().colors().drop_target_background)
                 })
                 .drag_over::<gpui::ExternalPaths>(|style, _, _, cx| {
                     style.bg(cx.theme().colors().drop_target_background)
                 })
-                .on_drag_move::<crate::panel::DraggedPaths>(cx.listener(
-                    move |this, event: &gpui::DragMoveEvent<crate::panel::DraggedPaths>, _, cx| {
+                .on_drag_move::<crate::ui::panel::DraggedPaths>(cx.listener(
+                    move |this,
+                          event: &gpui::DragMoveEvent<crate::ui::panel::DraggedPaths>,
+                          _,
+                          cx| {
                         let hovered = event.bounds.contains(&event.event.position);
                         if hovered && this.drag_target.is_none() {
                             if let Some(dir) = this.current_dir.clone() {
@@ -541,10 +588,10 @@ fn render_body(
                     },
                 ))
                 .on_drop(cx.listener(
-                    move |this, dragged: &crate::panel::DraggedPaths, window, cx| {
+                    move |this, dragged: &crate::ui::panel::DraggedPaths, window, cx| {
                         if let Some(dir) = this.current_dir.clone() {
                             this.drop_dragged(
-                                crate::panel::DraggedPaths(dragged.0.clone()),
+                                crate::ui::panel::DraggedPaths(dragged.0.clone()),
                                 dir,
                                 window,
                                 cx,
@@ -568,10 +615,14 @@ fn render_body(
         return content.into_any_element();
     }
 
+    // `items_stretch`, not the `h_flex()` default: the sidebar, the folder view
+    // and the details pane all have to span the full body height instead of
+    // being centred vertically.
     h_flex()
+        .items_stretch()
         .flex_1()
         .min_h(px(0.))
-        .child(crate::sidebar::render_sidebar(this, window, cx))
+        .child(crate::ui::sidebar::render_sidebar(this, window, cx))
         // The resizer between the sidebar and the content. It starts a drag
         // instead of tracking the mouse itself, so GPUI ends the resize when
         // the button is released (see Zed's dock resize handle).
@@ -583,9 +634,9 @@ fn render_body(
                 .flex_shrink_0()
                 .cursor(gpui::CursorStyle::ResizeLeftRight)
                 .hover(|style| style.bg(palette.drop_target))
-                .on_drag(crate::panel::SidebarResizeDrag, |_, _, _, cx| {
+                .on_drag(crate::ui::panel::SidebarResizeDrag, |_, _, _, cx| {
                     cx.stop_propagation();
-                    cx.new(|_| crate::panel::SidebarResizeDrag)
+                    cx.new(|_| crate::ui::panel::SidebarResizeDrag)
                 })
                 .on_mouse_down(
                     MouseButton::Left,
@@ -607,7 +658,9 @@ fn render_body(
         )
         .child(content)
         .when(this.is_details_pane_shown(), |body| {
-            body.children(crate::details_pane::render_details_pane(this, window, cx))
+            body.children(crate::ui::details_pane::render_details_pane(
+                this, window, cx,
+            ))
         })
         .into_any_element()
 }
@@ -695,11 +748,43 @@ fn render_conflict_banner(
 fn render_status_bar(this: &FileManagerPanel, cx: &mut Context<FileManagerPanel>) -> AnyElement {
     let palette = palette(cx.theme());
 
-    let mut status = format!("{} items", this.entries.len());
+    // While searching the counts describe the hits, not the folder
+    // (`nautilus-files-view.c` shows the same status text in both modes).
+    let searching = this.is_searching();
+    // A broad query stops at `MAX_RESULTS`; say so instead of lying about the
+    // total.
+    let truncated = searching
+        && this
+            .search_results
+            .as_ref()
+            .is_some_and(|results| results.truncated);
+    let shown: &[crate::model::entries::DirEntry] = if searching {
+        this.search_results
+            .as_ref()
+            .map(|results| results.entries.as_slice())
+            .unwrap_or(&[])
+    } else {
+        &this.entries
+    };
+
+    let count = if truncated {
+        format!("{}+", shown.len())
+    } else {
+        shown.len().to_string()
+    };
+    let mut status = if searching {
+        if this.search_running {
+            format!("Searching… {count}")
+        } else {
+            format!("{count} results")
+        }
+    } else {
+        format!("{} items", this.entries.len())
+    };
     // OpenXplorer shows the total size next to the item count.
-    let total: u64 = this.entries.iter().filter_map(|entry| entry.len).sum();
+    let total: u64 = shown.iter().filter_map(|entry| entry.len).sum();
     if total > 0 {
-        status.push_str(&format!("  {}", crate::entries::format_len(total)));
+        status.push_str(&format!("  {}", crate::model::entries::format_len(total)));
     }
     match this.selected.len() {
         0 => {}
@@ -707,7 +792,7 @@ fn render_status_bar(this: &FileManagerPanel, cx: &mut Context<FileManagerPanel>
             if let Some(entry) = this.selected_entry() {
                 let size = entry
                     .len
-                    .map(crate::entries::format_len)
+                    .map(crate::model::entries::format_len)
                     .unwrap_or_else(|| "—".into());
                 status.push_str(&format!(" — {} ({})", entry.name, size));
             }

@@ -11,7 +11,7 @@ use settings::SettingsStore;
 use workspace::Workspace;
 
 use crate::FileManagerPanel;
-use crate::views::ViewMode;
+use crate::ui::views::ViewMode;
 
 /// Sets up the globals the panel needs while it renders.
 fn init_globals(cx: &mut TestAppContext) {

@@ -8,10 +8,10 @@ use gpui::{AnyElement, Context, IntoElement, Window, div, px};
 use theme::ActiveTheme;
 use ui::{Button, ButtonSize, Color, Icon, IconName, IconSize, Label, LabelSize, prelude::*};
 
-use crate::entries::DirEntry;
-use crate::ox_theme::{metrics, palette};
-use crate::panel::FileManagerPanel;
-use crate::views::format_modified;
+use crate::model::entries::DirEntry;
+use crate::ui::ox_theme::{metrics, palette};
+use crate::ui::panel::FileManagerPanel;
+use crate::ui::views::format_modified;
 
 /// Renders the details pane, if an entry is selected.
 pub(crate) fn render_details_pane(
@@ -58,6 +58,9 @@ pub(crate) fn render_details_pane(
             // The preview.
             .child(
                 div()
+                    // `.flex_col()` only sets the direction; the display mode
+                    // has to be flex as well, or the centering is ignored.
+                    .flex()
                     .flex_1()
                     .min_h(px(120.))
                     .w_full()
@@ -163,6 +166,6 @@ fn kind_label(entry: &DirEntry) -> String {
 fn size_label(entry: &DirEntry) -> String {
     entry
         .len
-        .map(crate::entries::format_len)
+        .map(crate::model::entries::format_len)
         .unwrap_or_else(|| "—".into())
 }

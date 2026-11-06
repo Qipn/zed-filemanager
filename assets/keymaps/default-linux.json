@@ -1073,6 +1073,8 @@
       "shift-f10": "file_manager::OpenContextMenu",
       "f9": "file_manager::ToggleSidebar",
       "ctrl-shift-i": "file_manager::ToggleViewMode",
+      "ctrl-f": "file_manager::ToggleSearch",
+      "ctrl-l": "file_manager::EditLocation",
     },
   },
   {
