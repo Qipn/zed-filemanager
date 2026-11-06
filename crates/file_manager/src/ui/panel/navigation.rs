@@ -37,7 +37,7 @@ impl FileManagerPanel {
             self.history.push(directory);
         }
         self.history_index = self.history.len().saturating_sub(1);
-        self.load_directory(window, cx);
+        self.reload_view(window, cx);
         self.refresh_tree(window, cx);
         cx.notify();
     }
@@ -84,7 +84,11 @@ impl FileManagerPanel {
         self.selected.clear();
         self.selection_anchor = None;
         self.using_fallback_dir = false;
-        self.load_directory(window, cx);
+        // Leaving the search, like Windows Explorer's back button restores the
+        // location it had before the search.
+        self.search_query = None;
+        self.clear_search_results();
+        self.reload_view(window, cx);
         cx.notify();
     }
 
@@ -97,11 +101,19 @@ impl FileManagerPanel {
         self.selected.clear();
         self.selection_anchor = None;
         self.using_fallback_dir = false;
-        self.load_directory(window, cx);
+        self.search_query = None;
+        self.clear_search_results();
+        self.reload_view(window, cx);
         cx.notify();
     }
 
     pub(crate) fn go_up(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // While searching, "up" leaves the search and returns to the folder the
+        // search started from, like Windows Explorer returns to the scope.
+        if self.search_query.is_some() {
+            self.toggle_search(cx);
+            return;
+        }
         let Some(parent) = self
             .current_dir
             .as_ref()
@@ -113,14 +125,24 @@ impl FileManagerPanel {
         self.set_current_dir(parent, None, window, cx);
     }
 
+    /// Refreshes whatever the view currently shows: the folder, or the hits of
+    /// an active search.
+    pub(crate) fn reload_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_searching() {
+            self.start_search(window, cx);
+        } else {
+            self.load_directory(window, cx);
+        }
+    }
+
     pub(crate) fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.load_directory(window, cx);
+        self.reload_view(window, cx);
     }
 
     /// Toggles hidden-entry visibility and reloads.
     pub(crate) fn toggle_hidden(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.show_hidden = !self.show_hidden;
-        self.load_directory(window, cx);
+        self.reload_view(window, cx);
         cx.notify();
     }
 
@@ -131,7 +153,7 @@ impl FileManagerPanel {
         } else {
             SortMode::NameAscending
         };
-        self.load_directory(window, cx);
+        self.reload_view(window, cx);
         cx.notify();
     }
 
@@ -142,7 +164,7 @@ impl FileManagerPanel {
         } else {
             SortMode::ModifiedAscending
         };
-        self.load_directory(window, cx);
+        self.reload_view(window, cx);
         cx.notify();
     }
 
@@ -153,7 +175,7 @@ impl FileManagerPanel {
         } else {
             SortMode::SizeAscending
         };
-        self.load_directory(window, cx);
+        self.reload_view(window, cx);
         cx.notify();
     }
 

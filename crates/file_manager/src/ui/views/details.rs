@@ -94,8 +94,11 @@ pub(super) fn render_details_row(
         .is_some_and(|clipboard| clipboard.paths().contains(&entry.path));
     let is_drag_target = this.drag_target.as_ref() == Some(&entry.path);
     // Directories can be expanded in place, like OpenXplorer's expandable
-    // folders.
-    let is_expanded = entry.is_dir && this.is_entry_expanded(&entry.path);
+    // folders. While searching the rows are flat hits, so the expander is
+    // hidden (as in OpenXplorer and Nautilus); the 16 px placeholder stays so
+    // the icons remain aligned.
+    let can_expand = entry.is_dir && !this.is_searching();
+    let is_expanded = can_expand && this.is_entry_expanded(&entry.path);
     let expand_path = entry.path.clone();
 
     h_flex()
@@ -126,7 +129,7 @@ pub(super) fn render_details_row(
                         )))
                         .w(px(metrics::TREE_INDENT * depth as f32))
                         .flex_shrink_0()
-                        .when(entry.is_dir, |expander| {
+                        .when(can_expand, |expander| {
                             expander.child(
                                 h_flex()
                                     .id(SharedString::from(format!(
@@ -162,7 +165,7 @@ pub(super) fn render_details_row(
                                     ),
                             )
                         })
-                        .when(!entry.is_dir, |expander| {
+                        .when(!can_expand, |expander| {
                             expander.child(div().w(px(16.)).h(px(16.)).flex_shrink_0())
                         }),
                 )

@@ -70,7 +70,7 @@ impl FileManagerPanel {
         self.search_running = true;
         self.selected.clear();
         self.selection_anchor = None;
-        self._loading_task = Some(cx.spawn_in(window, async move |this, cx| {
+        self._search_task = Some(cx.spawn_in(window, async move |this, cx| {
             let result =
                 crate::model::search::search_directory(fs, root, query, show_hidden, sort_mode)
                     .await;

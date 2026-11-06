@@ -4,11 +4,11 @@
 //! pane) goes through `visible_rows`, so the flat list of search hits and the
 //! expanded folder tree behave the same way.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use gpui::{Context, KeyDownEvent, Window};
 
-use super::{FileManagerPanel, push_child_rows};
+use super::FileManagerPanel;
 use crate::model::entries::DirEntry;
 
 impl FileManagerPanel {
@@ -188,7 +188,17 @@ impl FileManagerPanel {
                 }
                 key => {
                     if !modifiers.control && !modifiers.alt && !modifiers.platform {
-                        self.search_input(key, window, cx);
+                        // `key` is the name printed on the key ("space", "a", …);
+                        // `key_char` is what was actually typed. Prefer the
+                        // typed character so spaces and non-ASCII input work.
+                        let text = event
+                            .keystroke
+                            .key_char
+                            .as_deref()
+                            .filter(|text| !text.is_empty() && *text != "space")
+                            .or_else(|| (key == "space").then_some(" "))
+                            .unwrap_or(key);
+                        self.search_input(text, window, cx);
                     }
                 }
             }
@@ -293,6 +303,27 @@ impl FileManagerPanel {
                 cx.stop_propagation();
             }
             _ => {}
+        }
+    }
+}
+
+/// Appends the children of an expanded directory to the visible rows.
+fn push_child_rows(
+    children: &[DirEntry],
+    depth: usize,
+    matches: &impl Fn(&str) -> bool,
+    expanded: &std::collections::HashMap<PathBuf, Vec<DirEntry>>,
+    rows: &mut Vec<(DirEntry, usize)>,
+) {
+    for child in children {
+        if !matches(&child.name) {
+            continue;
+        }
+        rows.push((child.clone(), depth));
+        if child.is_dir {
+            if let Some(grandchildren) = expanded.get(&child.path) {
+                push_child_rows(grandchildren, depth + 1, matches, expanded, rows);
+            }
         }
     }
 }

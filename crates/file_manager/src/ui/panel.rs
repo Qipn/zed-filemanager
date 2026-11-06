@@ -80,6 +80,12 @@ pub struct FileManagerPanel {
     pub(crate) history_index: usize,
     pub(crate) loading_generation: u64,
     pub(crate) _loading_task: Option<Task<()>>,
+    /// The task of the running search.
+    ///
+    /// Kept apart from `_loading_task`: a new search must not drop (and thus
+    /// cancel) an in-flight directory load, and navigating must not cancel the
+    /// search either.
+    pub(crate) _search_task: Option<Task<()>>,
     pub(crate) _operation_task: Option<Task<()>>,
     pub(crate) error: Option<SharedString>,
     pub(crate) clipboard: Option<Clipboard>,
@@ -160,6 +166,7 @@ impl FileManagerPanel {
             history_index: 0,
             loading_generation: 0,
             _loading_task: None,
+            _search_task: None,
             _operation_task: None,
             error: None,
             clipboard: None,
@@ -291,77 +298,6 @@ impl FileManagerPanel {
             })
             .log_err();
         }));
-    }
-
-    pub(crate) fn copy_selected(&mut self, cx: &mut Context<Self>) {
-        let paths: Vec<PathBuf> = self
-            .selected_entries()
-            .into_iter()
-            .map(|entry| entry.path)
-            .collect();
-        if !paths.is_empty() {
-            self.clipboard = Some(Clipboard::Copied(paths));
-            cx.notify();
-        }
-    }
-
-    pub(crate) fn cut_selected(&mut self, cx: &mut Context<Self>) {
-        let paths: Vec<PathBuf> = self
-            .selected_entries()
-            .into_iter()
-            .map(|entry| entry.path)
-            .collect();
-        if !paths.is_empty() {
-            self.clipboard = Some(Clipboard::Cut(paths));
-            cx.notify();
-        }
-    }
-
-    pub(crate) fn paste_clipboard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(clipboard) = self.clipboard.clone() else {
-            return;
-        };
-        let Some(directory) = self.current_dir.clone() else {
-            return;
-        };
-        let sources: Vec<PathBuf> = clipboard
-            .paths()
-            .iter()
-            .filter(|source| {
-                source
-                    .file_name()
-                    .is_some_and(|name| directory.join(name) != **source)
-            })
-            .cloned()
-            .collect();
-        if sources.is_empty() {
-            return;
-        }
-        // A cut clipboard moves the entries, a copied one duplicates them.
-        let copy = matches!(clipboard, Clipboard::Copied(_));
-        let from_cut = matches!(clipboard, Clipboard::Cut(_));
-        self.start_transfer(sources, directory, copy, from_cut, window, cx);
-    }
-}
-
-/// Appends the children of an expanded directory to the visible rows.
-fn push_child_rows(
-    children: &[DirEntry],
-    depth: usize,
-    matches: &impl Fn(&str) -> bool,
-    expanded: &std::collections::HashMap<PathBuf, Vec<DirEntry>>,
-    rows: &mut Vec<(DirEntry, usize)>,
-) {
-    for child in children {
-        if !matches(&child.name) {
-            continue;
-        }
-        rows.push((child.clone(), depth));
-        if child.is_dir {
-            if let Some(grandchildren) = expanded.get(&child.path) {
-                push_child_rows(grandchildren, depth + 1, matches, expanded, rows);
-            }
-        }
     }
 }
 

@@ -66,7 +66,10 @@ pub(super) fn render_navigation_row(
 /// location, and the search query. The panel does the same: the slot shows the
 /// search while `search_query` is set, the editable path while `path_edit` is
 /// set, and the breadcrumbs otherwise.
-pub(super) fn render_location_slot(this: &FileManagerPanel, cx: &mut Context<FileManagerPanel>) -> AnyElement {
+pub(super) fn render_location_slot(
+    this: &FileManagerPanel,
+    cx: &mut Context<FileManagerPanel>,
+) -> AnyElement {
     if this.search_query.is_some() {
         render_search_field(this, cx)
     } else {
@@ -75,7 +78,10 @@ pub(super) fn render_location_slot(this: &FileManagerPanel, cx: &mut Context<Fil
 }
 
 /// The search mode of the location slot.
-pub(super) fn render_search_field(this: &FileManagerPanel, cx: &mut Context<FileManagerPanel>) -> AnyElement {
+pub(super) fn render_search_field(
+    this: &FileManagerPanel,
+    cx: &mut Context<FileManagerPanel>,
+) -> AnyElement {
     let palette = palette(cx.theme());
     let query = this.search_query.clone().unwrap_or_default();
 
@@ -102,6 +108,43 @@ pub(super) fn render_search_field(this: &FileManagerPanel, cx: &mut Context<File
                 .size(IconSize::XSmall)
                 .color(Color::Custom(palette.muted)),
         )
+        // The search scope, like Windows Explorer's "<folder> › Search: q"
+        // breadcrumb: the searches always start at the current folder, so show
+        // it and let a click jump back there.
+        .when_some(this.current_dir.clone(), |field, directory| {
+            let name = directory
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_else(|| directory.display().to_string());
+            field
+                .child(
+                    div()
+                        .id("file-manager-search-scope")
+                        .h(px(22.))
+                        .px(px(6.))
+                        .rounded_xs()
+                        .flex()
+                        .items_center()
+                        .hover(|style| style.bg(palette.hover))
+                        .child(
+                            Label::new(SharedString::from(name))
+                                .single_line()
+                                .size(LabelSize::Small)
+                                .color(Color::Custom(palette.muted)),
+                        )
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, _, cx| {
+                                this.toggle_search(cx);
+                            }),
+                        ),
+                )
+                .child(
+                    Label::new("/")
+                        .size(LabelSize::Small)
+                        .color(Color::Custom(palette.text_tertiary)),
+                )
+        })
         .child(
             Label::new(SharedString::from(format!("{query}|")))
                 .single_line()
@@ -120,7 +163,10 @@ pub(super) fn render_search_field(this: &FileManagerPanel, cx: &mut Context<File
 }
 
 /// The magnifier button that opens the search mode.
-pub(super) fn render_search_toggle(this: &FileManagerPanel, cx: &mut Context<FileManagerPanel>) -> AnyElement {
+pub(super) fn render_search_toggle(
+    this: &FileManagerPanel,
+    cx: &mut Context<FileManagerPanel>,
+) -> AnyElement {
     let _ = this;
     IconButton::new("file-manager-search", IconName::MagnifyingGlass)
         .icon_size(IconSize::Small)
@@ -132,7 +178,10 @@ pub(super) fn render_search_toggle(this: &FileManagerPanel, cx: &mut Context<Fil
 }
 
 /// The address bar: the breadcrumb path, or the edit field.
-pub(super) fn render_address_bar(this: &FileManagerPanel, cx: &mut Context<FileManagerPanel>) -> AnyElement {
+pub(super) fn render_address_bar(
+    this: &FileManagerPanel,
+    cx: &mut Context<FileManagerPanel>,
+) -> AnyElement {
     let palette = palette(cx.theme());
 
     if let Some(buffer) = &this.path_edit {
@@ -224,4 +273,3 @@ pub(super) fn render_address_bar(this: &FileManagerPanel, cx: &mut Context<FileM
         )
         .into_any_element()
 }
-

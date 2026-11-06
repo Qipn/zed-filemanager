@@ -12,7 +12,7 @@ use gpui::{Context, PromptLevel, Window};
 use util::ResultExt;
 
 use super::FileManagerPanel;
-use crate::model::clipboard::RenameState;
+use crate::model::clipboard::{Clipboard, RenameState};
 use crate::model::undo::{Change, HistoryStep};
 
 impl FileManagerPanel {
@@ -296,5 +296,54 @@ impl FileManagerPanel {
     pub(crate) fn cancel_rename(&mut self, cx: &mut Context<Self>) {
         self.rename_state = None;
         cx.notify();
+    }
+    pub(crate) fn copy_selected(&mut self, cx: &mut Context<Self>) {
+        let paths: Vec<PathBuf> = self
+            .selected_entries()
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect();
+        if !paths.is_empty() {
+            self.clipboard = Some(Clipboard::Copied(paths));
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn cut_selected(&mut self, cx: &mut Context<Self>) {
+        let paths: Vec<PathBuf> = self
+            .selected_entries()
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect();
+        if !paths.is_empty() {
+            self.clipboard = Some(Clipboard::Cut(paths));
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn paste_clipboard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(clipboard) = self.clipboard.clone() else {
+            return;
+        };
+        let Some(directory) = self.current_dir.clone() else {
+            return;
+        };
+        let sources: Vec<PathBuf> = clipboard
+            .paths()
+            .iter()
+            .filter(|source| {
+                source
+                    .file_name()
+                    .is_some_and(|name| directory.join(name) != **source)
+            })
+            .cloned()
+            .collect();
+        if sources.is_empty() {
+            return;
+        }
+        // A cut clipboard moves the entries, a copied one duplicates them.
+        let copy = matches!(clipboard, Clipboard::Copied(_));
+        let from_cut = matches!(clipboard, Clipboard::Cut(_));
+        self.start_transfer(sources, directory, copy, from_cut, window, cx);
     }
 }
