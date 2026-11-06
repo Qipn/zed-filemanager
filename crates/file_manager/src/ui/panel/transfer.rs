@@ -11,7 +11,8 @@ use util::ResultExt;
 
 use super::{ConflictDecision, DraggedPaths, FileManagerPanel, PendingTransfer};
 use crate::model::conflict::{
-    ConflictPolicy, apply_transfer, conflicting_indices, plan_targets, unique_target,
+    ConflictPolicy, apply_transfer, conflicting_indices, filter_noop_sources, plan_targets,
+    unique_target,
 };
 use crate::model::undo::Change;
 
@@ -34,16 +35,15 @@ impl FileManagerPanel {
         let Some(destination) = destination else {
             return;
         };
-        let sources: Vec<PathBuf> = dragged
-            .0
-            .into_iter()
-            .filter(|source| *source != destination)
-            .collect();
+        // Holding Ctrl copies the dragged entries instead of moving them.
+        let copy = window.modifiers().control;
+        // Dropping an entry onto its own row (or into its own directory) must be a
+        // no-op: the planned target is the entry itself, and answering the conflict
+        // prompt with "Replace" would delete it before renaming it onto itself.
+        let sources = filter_noop_sources(dragged.0, &destination, copy);
         if sources.is_empty() {
             return;
         }
-        // Holding Ctrl copies the dragged entries instead of moving them.
-        let copy = window.modifiers().control;
         self.start_transfer(sources, destination, copy, false, window, cx);
     }
 

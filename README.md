@@ -59,7 +59,10 @@ script/build-flatpak                        # 打包成 Flatpak 并安装到本�
   模板没写扩展名时保留各自原扩展名；目标已存在则报错中止而不是覆盖；整批记成一次可撤销的变更
 - 复制 / 剪切 / 粘贴（面板内剪贴板，粘贴到当前目录）
 - **拖放**：拖动已选中行时带上整个选区；支持从外部（文件管理器/桌面）拖入；
-  落点亮色用 Zed 的 `drop_target_background`
+  落点亮色用 Zed 的 `drop_target_background`。
+  **拖到原地是空操作**：把条目拖到它自己的行上、或者拖到它所在目录的空白处，
+  不会改名成 `A (1)`（`Replace` 分支以前会先删掉再改名，有丢数据的风险），
+  只有 Ctrl 拖拽（复制）才会在原地生成 `A (1)`
 - 删除：`Move to Trash` 走 `Fs::trash`（freedesktop 回收站，可撤销）、
   `Delete Permanently` 直接删除；两者都有确认弹窗
 - **传输进度与取消**：粘贴/拖入时头部下方显示 `Copying N of M — name` + 进度条 +

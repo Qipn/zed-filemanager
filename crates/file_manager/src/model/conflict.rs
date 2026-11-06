@@ -55,6 +55,38 @@ pub(crate) fn conflicting_indices(fs: &Arc<dyn Fs>, targets: &[PathBuf]) -> Vec<
         .collect()
 }
 
+/// Drops the sources whose transfer into `directory` must not happen at all.
+///
+/// Two cases:
+///
+/// - **The target of a source is the source itself** (`directory` is the source
+///   or sits inside it). Letting this reach the conflict prompt is destructive:
+///   `Replace` removes the entry and then renames it onto itself (data loss),
+///   and `Keep both` renames the folder to `name (1)`. Dropping an entry onto
+///   its own row lands here.
+/// - **A move into the directory the source already lives in.** Nothing to do
+///   either; without this it degenerates into the same conflict path and the
+///   entry gets renamed to `name (1)` just for being dropped where it already
+///   is.
+///
+/// Copies keep both cases out of the second rule: a Ctrl-drag or copy+paste
+/// into the same directory is a legitimate "duplicate this here".
+pub(crate) fn filter_noop_sources(
+    sources: Vec<PathBuf>,
+    directory: &Path,
+    copy: bool,
+) -> Vec<PathBuf> {
+    sources
+        .into_iter()
+        .filter(|source| {
+            if directory.starts_with(source) {
+                return false;
+            }
+            !(!copy && source.parent() == Some(directory))
+        })
+        .collect()
+}
+
 /// Applies a single transfer, honouring `policy` when the target exists.
 ///
 /// `chosen_target` is the name the user typed in the conflict prompt; it replaces
@@ -157,4 +189,76 @@ pub(crate) fn unique_target(fs: &Arc<dyn Fs>, target: &Path) -> PathBuf {
         fallback.push(extension);
     }
     directory.join(fallback)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn paths(items: &[&str]) -> Vec<PathBuf> {
+        items.iter().map(PathBuf::from).collect()
+    }
+
+    #[test]
+    fn dropping_onto_its_own_directory_is_a_noop_when_moving() {
+        // The target of `A` would be `A` itself: `Keep both` would rename it to
+        // `A (1)` and `Replace` would delete it before renaming onto itself.
+        let sources = paths(&["/home/alice/A"]);
+        assert!(
+            filter_noop_sources(sources, Path::new("/home/alice"), false).is_empty(),
+            "a move into the directory the entry already lives in does nothing"
+        );
+    }
+
+    #[test]
+    fn dropping_onto_its_own_directory_still_copies() {
+        // Ctrl-drag / copy+paste in place is a real operation.
+        let sources = paths(&["/home/alice/A"]);
+        assert_eq!(
+            filter_noop_sources(sources, Path::new("/home/alice"), true),
+            paths(&["/home/alice/A"])
+        );
+    }
+
+    #[test]
+    fn dropping_an_entry_onto_itself_is_a_noop() {
+        let sources = paths(&["/home/alice/A"]);
+        assert!(filter_noop_sources(sources, Path::new("/home/alice/A"), true).is_empty());
+    }
+
+    #[test]
+    fn dropping_an_entry_into_its_own_subtree_is_a_noop() {
+        let sources = paths(&["/home/alice/A"]);
+        assert!(
+            filter_noop_sources(
+                paths(&["/home/alice/A"]),
+                Path::new("/home/alice/A/sub"),
+                false
+            )
+            .is_empty()
+        );
+        // ...but a sibling that merely shares a prefix is not "inside".
+        assert_eq!(
+            filter_noop_sources(sources, Path::new("/home/alice/A (1)"), false),
+            paths(&["/home/alice/A"])
+        );
+    }
+
+    #[test]
+    fn moves_between_directories_are_kept() {
+        assert_eq!(
+            filter_noop_sources(paths(&["/home/alice/A"]), Path::new("/home/alice/b"), false),
+            paths(&["/home/alice/A"])
+        );
+    }
+
+    #[test]
+    fn only_the_entries_already_in_place_are_dropped() {
+        let sources = paths(&["/home/alice/A", "/tmp/B", "/home/alice/C"]);
+        assert_eq!(
+            filter_noop_sources(sources, Path::new("/home/alice"), false),
+            paths(&["/tmp/B"]),
+            "A and C are already in /home/alice, B comes from elsewhere"
+        );
+    }
 }
