@@ -213,6 +213,46 @@ flatpak install --user ./io.github.qipn.ZedFileManager.flatpak
 `flatpak list --app --columns=application,version,size` 里版本显示为 `dev`
 （本项目没打版本号，`metainfo` 也没写 release 条目）。
 
+#### 把现有 Zed 的数据迁过来（硬链接，几乎不占空间）
+
+Flatpak 版的数据在 `~/.var/app/<id>/{data,config}/zed`，与 `~/.local/share/zed`、
+`~/.config/zed` 完全隔离。`script/link-zed-data` 用硬链接把两边接起来：
+
+```bash
+script/link-zed-data                        # 先看计划（dry-run，默认不改任何东西）
+script/link-zed-data --yes                  # 执行（要求两个 Zed 都退出）
+script/link-zed-data --yes --while-running  # 不想关编辑器时（db 只能是快照）
+```
+
+策略：
+
+| 内容 | 方式 | 原因 |
+|---|---|---|
+| `extensions` `languages` `node` `external_agents` `prettier` | **硬链接**（同一 inode） | 下载一次就只读，共约 1 GB，不占额外空间 |
+| `db/0-stable` → `db/0-dev` | 真复制 | SQLite 被两个**不同版本**共用 inode 时，schema 迁移会互相写坏 |
+| `threads/threads.db` | 真复制 | 同上（138 MB） |
+| `settings.json` / `keymap.json` / `tasks.json` | 真复制 | Zed 用「写临时文件 + rename」，rename 会断开硬链接 |
+| `themes/` 等只读目录 | 硬链接 | 不会被就地改写 |
+| `logs` | 不迁移 | 没有价值 |
+
+细节：
+
+- 目标侧已有的文件默认**不覆盖**（`cp -n`），要覆盖加 `--force`（先删再链）
+- 被覆盖前一律先备份成 `*.bak-<时间戳>`（`db/0-dev`、`threads`、`prompts`、`settings.json` 都备份）
+- db 目录名带 channel 后缀：原生稳定版是 `0-stable`，而本 fork 的版本串是
+  `1.28.0+dev`、读的是 `0-dev`，脚本会自动映射（`--db-from` / `--db-to` 可改）
+- 两边不在同一文件系统时自动退化成真复制（会 print 一条 warn）
+
+实测（52k 文件、1.2 GB，**2.5 秒**完成）：`extensions` 8408/8419、`languages` 25453/30425、
+`node` 4946/9754 个文件与原生共享 inode；剩余差异是 Flatpak 侧原本就有同名文件，被 `-n` 跳过了。
+
+已知副作用：
+
+- `node/` 会出现两份（本 fork 自己下过一个），`du` 从 114M 涨到 218M，可手动删掉不用的那份
+- 迁过来的旧 agent 会话在**回放工具调用**时会刷 `missing field 'path'` / `expected ':'` 之类
+  的 ERROR（`crates/agent/src/thread.rs` 的 `tool.replay(...).log_err()`），**非致命**，
+  是 1.26 与 1.28 的工具参数格式差异；介意就删掉 `threads/` 让它重建
+
 清单在 `flatpak/io.github.qipn.ZedFileManager.yml`，要点：
 
 - **不在沙箱里编译**：`zed` 的直接依赖（glib/gio、freetype、alsa、xcb、xkbcommon、libstdc++）
@@ -336,7 +376,7 @@ crates/file_manager/
 | `crates/zed/Cargo.toml`、`crates/zed/src/zed.rs` | 启动时注册面板（`initialize_panels`）|
 | `crates/editor/src/editor.rs`、`crates/project_panel`、`crates/outline_panel` | “Reveal in File Manager” 优先交给本面板 |
 | `assets/keymaps/default-linux.json` | 新增 `FileManagerPanel` 上下文键位块 |
-| `script/build-zed`、`script/build-flatpak` | NixOS 构建与本地 Flatpak 打包 |
+| `script/build-zed`、`script/build-flatpak`、`script/link-zed-data` | NixOS 构建、本地 Flatpak 打包、数据迁移 |
 | `flatpak/` | Flatpak 清单 + desktop + metainfo |
 | `.github/workflows/file-manager.yml` | CI |
 

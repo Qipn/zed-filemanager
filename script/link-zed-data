@@ -1,0 +1,263 @@
+#!/usr/bin/env bash
+# Purpose: 把现有 Zed（nix 装的稳定版）的数据接到 Flatpak 版，用**硬链接**而不是复制，
+#          省掉约 1 GB 的 extensions / languages / node / external_agents。
+#
+# Usage:
+#   script/link-zed-data                    # 只打印计划（dry-run）
+#   script/link-zed-data --yes              # 执行
+#   script/link-zed-data --yes --force      # 目标已存在的文件也覆盖（先删再链）
+#   script/link-zed-data --yes --link-db    # db / threads 也硬链接（有风险，见下）
+#
+# Why 硬链接：
+#   两边的数据目录在同一个文件系统（都在 /home），硬链接不占额外空间，也不耗时；
+#   而 extensions / languages / node / external_agents / prettier 属于"下载一次就只读"
+#   的树，最适合共享 inode。
+#
+# Why SQLite 默认不硬链接：
+#   同一个 inode 被两个**不同版本**的 Zed 打开时，schema 迁移会就地改写文件：
+#   新版本迁移后，旧版本再打开迁移过的库可能直接失败或写坏数据。WAL/锁也是按 inode
+#   走的，两边会互相看到对方的写。所以 db 与 threads.db 默认真复制（~140 MB），
+#   只有明确要"两边共用历史"时才用 --link-db。
+#
+# 注意：Zed 改写 settings.json 之类是「写临时文件 + rename」，rename 会断开硬链接
+#   （之后两边各自独立），所以配置文件一律真复制，不硬链接。
+#
+# Created: 2026-11-07
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+APP_ID=io.github.qipn.ZedFileManager
+SRC_DATA="${HOME}/.local/share/zed"
+SRC_CONFIG="${HOME}/.config/zed"
+DST_DATA="${HOME}/.var/app/${APP_ID}/data/zed"
+DST_CONFIG="${HOME}/.var/app/${APP_ID}/config/zed"
+
+# 硬链接：大、且基本只读
+LINK_DIRS=(extensions external_agents languages node prettier debug_adapters)
+# 真复制：会被就地改写 / 运行时持有
+COPY_DIRS=(threads prompts)
+SKIP_NAMES=(logs)          # 日志没有迁移价值，留在各自一边
+
+DRY_RUN=1
+FORCE=0
+LINK_DB=0
+WHILE_RUNNING=0
+DO_CONFIG=1
+DB_FROM=stable             # 原生 Zed 是稳定版 → db/0-stable
+DB_TO=dev                  # 本 fork 的 version 是 1.28.0+dev → db/0-dev
+
+usage() {
+    cat <<'EOF'
+Usage: script/link-zed-data [options]
+
+Options:
+  --yes            真的执行（默认只打印计划）
+  --force          目标已存在的文件也覆盖（先删再链接）
+  --link-db        db / threads 也硬链接（默认真复制，见脚本头部说明）
+  --while-running  Zed 在跑也继续（默认拒绝，避免复制到写了一半的 SQLite）
+  --no-config      不动 ~/.config/zed
+  --db-from NAME   源 db 目录名后缀，默认 stable（即 db/0-stable）
+  --db-to NAME     目标 db 目录名后缀，默认 dev（即 db/0-dev）
+  -h, --help       显示帮助
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --yes) DRY_RUN=0; shift ;;
+        --force) FORCE=1; shift ;;
+        --link-db) LINK_DB=1; shift ;;
+        --while-running) WHILE_RUNNING=1; shift ;;
+        --no-config) DO_CONFIG=0; shift ;;
+        --db-from) DB_FROM="$2"; shift 2 ;;
+        --db-to) DB_TO="$2"; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "error: unknown argument '$1'" >&2; usage; exit 1 ;;
+    esac
+done
+
+STAMP=$(date +%Y%m%d-%H%M%S)
+
+die() { echo "error: $*" >&2; exit 1; }
+say() { printf '%s\n' "$*"; }
+
+[[ -d "$SRC_DATA" ]] || die "$SRC_DATA 不存在（先运行一次原生 Zed）"
+
+# --- 前置检查 -------------------------------------------------------------
+
+if pgrep -f 'zed-bin|zed-editor|/bin/zed$' >/dev/null 2>&1; then
+    if [[ "$WHILE_RUNNING" != 1 ]]; then
+        say "检测到 Zed 正在运行："
+        pgrep -af 'zed-bin|zed-editor|/bin/zed$' | grep -v pgrep | sed 's/^/  /'
+        die "先退出所有 Zed，或加 --while-running（此时 db 的不一致快照会被 Zed 自己挪到 backup 目录并重建）"
+    fi
+    say "warn: Zed 正在运行，db 只能是快照；--while-running 已确认。"
+fi
+
+SRC_DEV=$(stat -c %d "$SRC_DATA")
+DST_ROOT="${HOME}/.var/app/${APP_ID}/data"
+mkdir -p "$DST_ROOT"
+DST_DEV=$(stat -c %d "$DST_ROOT")
+
+if [[ "$SRC_DEV" != "$DST_DEV" ]]; then
+    say "warn: $SRC_DATA 与 $DST_ROOT 不在同一文件系统（dev $SRC_DEV vs $DST_DEV）"
+    say "      → 无法硬链接，大目录会退化成真复制。"
+    LINK_OK=0
+else
+    LINK_OK=1
+fi
+
+# --- 小工具 ---------------------------------------------------------------
+
+count_files() {
+    if [[ -d "$1" ]]; then
+        find "$1" -type f 2>/dev/null | wc -l
+    else
+        echo 0
+    fi
+}
+
+human() { du -sh "$1" 2>/dev/null | cut -f1; }
+
+# 目标里已有数据就先整体挪走，绝不就地删除
+backup_path() {
+    local path=$1
+    [[ -e "$path" ]] || return 0
+    [[ -d "$path" && -z "$(ls -A "$path" 2>/dev/null)" ]] && return 0
+    local dest="${path}.bak-${STAMP}"
+    say "  备份 $(basename "$path") → $(basename "$dest")"
+    mv -- "$path" "$dest"
+}
+
+# 硬链接一棵树；-n 跳过已存在的文件，不覆盖 Flatpak 侧已有的下载
+link_dir() {
+    local name=$1
+    local src="$SRC_DATA/$name" dst="$DST_DATA/$name"
+    [[ -d "$src" ]] || return 0
+
+    if [[ "$DRY_RUN" == 1 ]]; then
+        printf '  %-16s %-6s %6s files → 硬链接到 %s\n' \
+            "$name" "$(human "$src")" "$(find "$src" -type f | wc -l)" "$dst"
+        return 0
+    fi
+
+    local before after
+    before=$(count_files "$dst")
+    mkdir -p "$dst"
+    if [[ "$LINK_OK" == 1 ]]; then
+        if [[ "$FORCE" == 1 ]]; then
+            cp -al --remove-destination -- "$src/." "$dst/"
+        else
+            cp -aln -- "$src/." "$dst/"
+        fi
+    else
+        cp -a -- "$src/." "$dst/"
+    fi
+    after=$(count_files "$dst")
+    printf '  %-16s %-6s %6s → %6s files\n' "$name" "$(human "$dst")" "$before" "$after"
+}
+
+# 真复制一个目录（用于 SQLite）；--exclude 掉 -shm，它只是共享内存索引
+copy_dir() {
+    local name=$1
+    local src="$SRC_DATA/$name" dst="$DST_DATA/$name"
+    [[ -d "$src" ]] || return 0
+
+    if [[ "$DRY_RUN" == 1 ]]; then
+        printf '  %-16s %-6s 复制到 %s\n' "$name" "$(human "$src")" "$dst"
+        return 0
+    fi
+
+    backup_path "$dst"
+    mkdir -p "$dst"
+    rsync -a --exclude='*-shm' -- "$src/" "$dst/"
+    printf '  %-16s %-6s 已复制\n' "$name" "$(human "$dst")"
+}
+
+# --- 计划 / 执行 ----------------------------------------------------------
+
+say "源数据:   $SRC_DATA"
+say "目标数据: $DST_DATA"
+say "模式:     $([[ "$DRY_RUN" == 1 ]] && echo 'dry-run（加 --yes 才执行）' || echo '执行')"
+
+say ""
+say "[1/4] 硬链接大目录（extensions / languages / node / …）"
+for d in "${LINK_DIRS[@]}"; do link_dir "$d"; done
+
+say ""
+say "[2/4] 会话历史与数据库"
+if [[ "$LINK_DB" == 1 ]]; then
+    say "  warn: --link-db：两边共用同一个 inode。旧版 Zed 打开新版迁移过的 SQLite 会出问题。"
+    for d in "${COPY_DIRS[@]}"; do link_dir "$d"; done
+else
+    for d in "${COPY_DIRS[@]}"; do copy_dir "$d"; done
+fi
+
+# db 目录名带 channel 后缀，需要映射：稳定版 0-stable → 本 fork 的 0-dev
+if [[ -d "$SRC_DATA/db/0-$DB_FROM" ]]; then
+    db_src="$SRC_DATA/db/0-$DB_FROM"
+    db_dst="$DST_DATA/db/0-$DB_TO"
+    printf '  %-16s %-6s 复制到 %s\n' "db/0-$DB_FROM" "$(human "$db_src")" "db/0-$DB_TO"
+    if [[ "$DRY_RUN" != 1 ]]; then
+        backup_path "$db_dst"
+        mkdir -p "$db_dst"
+        rsync -a --exclude='*-shm' -- "$db_src/" "$db_dst/"
+    fi
+else
+    say "  db/0-$DB_FROM 不存在，跳过数据库迁移"
+fi
+
+if [[ "$DO_CONFIG" == 1 ]]; then
+    say ""
+    say "[3/4] 配置（settings / keymap / tasks / themes）"
+    if [[ "$DRY_RUN" == 1 ]]; then
+        for f in "$SRC_CONFIG"/*.json; do
+            [[ -f "$f" ]] || continue
+            printf '  %-16s %-6s 复制到 %s\n' "$(basename "$f")" "$(du -h "$f" | cut -f1)" "$DST_CONFIG/"
+        done
+    else
+        mkdir -p "$DST_CONFIG"
+        for f in "$SRC_CONFIG"/*; do
+            [[ -f "$f" ]] || continue
+            base=$(basename "$f")
+            # 跳过历史备份，只迁正在用的配置
+            case "$base" in
+                *.bak*|*.pre-*) continue ;;
+            esac
+            if [[ -e "$DST_CONFIG/$base" ]]; then
+                cp -p -- "$DST_CONFIG/$base" "$DST_CONFIG/$base.bak-$STAMP"
+            fi
+            cp -p -- "$f" "$DST_CONFIG/$base"
+            printf '  %-16s 已复制\n' "$base"
+        done
+        # themes / snippets 是只读目录，硬链接即可
+        for d in "$SRC_CONFIG"/*/; do
+            [[ -d "$d" ]] || continue
+            base=$(basename "$d")
+            mkdir -p "$DST_CONFIG/$base"
+            if [[ "$LINK_OK" == 1 ]]; then
+                cp -aln -- "$d/." "$DST_CONFIG/$base/"
+            else
+                cp -a -- "$d/." "$DST_CONFIG/$base/"
+            fi
+            printf '  %-16s 已链接\n' "$base/"
+        done
+    fi
+else
+    say ""
+    say "[3/4] 配置：--no-config，跳过"
+fi
+
+say ""
+say "[4/4] 汇总"
+if [[ "$DRY_RUN" == 1 ]]; then
+    say "  这是 dry-run，什么都没改。确认后执行："
+    say "    script/link-zed-data --yes$([[ "$WHILE_RUNNING" == 1 ]] && echo ' --while-running')"
+else
+    say "  目标数据目录现在 $(human "$DST_DATA")（源 $SRC_DATA 是 $(human "$SRC_DATA")）"
+    say "  重叠部分不占额外空间；可用 du -sh 与 stat -c %h 检查链接计数"
+    say ""
+    say "  下一步：flatpak run $APP_ID"
+fi
