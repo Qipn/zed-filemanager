@@ -31,9 +31,9 @@ use ui::prelude::*;
 
 use crate::ui::panel::FileManagerPanel;
 use crate::{
-    Copy, Cut, Delete, EditLocation, NewFile, NewFolder, Open, OpenContextMenu, Paste, Redo,
-    Refresh, Rename, SelectAll, ToggleBookmark, ToggleSearch, ToggleSidebar, ToggleViewMode, Trash,
-    Undo,
+    CancelInput, ConfirmInput, Copy, Cut, Delete, EditLocation, NewFile, NewFolder, Open,
+    OpenContextMenu, Paste, Redo, Refresh, Rename, SelectAll, ToggleBookmark, ToggleSearch,
+    ToggleSidebar, ToggleViewMode, Trash, Undo,
 };
 
 /// Renders the whole panel.
@@ -52,6 +52,15 @@ pub(super) fn render(
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(|this, _, window, cx| {
+                // Clicking anywhere outside an inline editor leaves it. The
+                // editors and the address bar stop the propagation of their own
+                // clicks, so only clicks on the background reach this handler.
+                if this.path_edit.is_some() {
+                    this.cancel_path_edit(window, cx);
+                }
+                if this.rename_state.is_some() {
+                    this.cancel_rename(window, cx);
+                }
                 window.focus(&this.focus_handle, cx);
             }),
         )
@@ -121,6 +130,15 @@ pub(super) fn render(
         }))
         .on_action(cx.listener(|this, _: &SelectAll, _, cx| {
             this.select_all(cx);
+        }))
+        // Escape is claimed by the default keymap (`escape` → `menu::Cancel`),
+        // which runs before the text fields' own key handlers, so the panel
+        // handles it for them.
+        .on_action(cx.listener(|this, _: &CancelInput, window, cx| {
+            this.cancel_active_input(window, cx);
+        }))
+        .on_action(cx.listener(|this, _: &ConfirmInput, window, cx| {
+            this.confirm_active_input(window, cx);
         }))
         .on_action(cx.listener(|this, _: &ToggleViewMode, _, cx| {
             this.set_view_mode(

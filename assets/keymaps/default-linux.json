@@ -1057,7 +1057,7 @@
   {
     "context": "FileManagerPanel",
     "bindings": {
-      "enter": "file_manager::Open",
+      "enter": "file_manager::ConfirmInput",
       "f2": "file_manager::Rename",
       "cut": "file_manager::Cut",
       "ctrl-x": "file_manager::Cut",
@@ -1077,6 +1077,7 @@
       "ctrl-l": "file_manager::EditLocation",
       "ctrl-d": "file_manager::ToggleBookmark",
       "ctrl-a": "file_manager::SelectAll",
+      "escape": "file_manager::CancelInput",
     },
   },
   {

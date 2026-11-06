@@ -85,6 +85,12 @@ actions!(
         ToggleBookmark,
         /// Selects every row of the folder view.
         SelectAll,
+        /// Cancels the active inline input (location entry, rename) or leaves the
+        /// search mode.
+        CancelInput,
+        /// Confirms the active inline input, or opens the selection when none is
+        /// being edited.
+        ConfirmInput,
     ]
 );
 

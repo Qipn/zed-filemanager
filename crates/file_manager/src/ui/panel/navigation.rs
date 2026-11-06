@@ -29,6 +29,10 @@ impl FileManagerPanel {
         // it had before the search.
         self.search_query = None;
         self.clear_search_results();
+        // It also closes any inline editor, so a stale path buffer or rename
+        // cannot survive a jump made from the sidebar or the history buttons.
+        self.path_edit = None;
+        self.rename_state = None;
         if let Some(path) = selected {
             self.selected.push(path);
         }
@@ -211,6 +215,39 @@ impl FileManagerPanel {
         if self.path_edit.take().is_some() {
             window.focus(&self.focus_handle, cx);
             cx.notify();
+        }
+    }
+
+    /// Cancels whatever inline input currently has the focus.
+    ///
+    /// Escape cannot be handled by the text fields directly: the default keymap
+    /// binds `escape` to `menu::Cancel` with no context, and key bindings run
+    /// before the fields' `on_key_down` listeners. The binding for
+    /// `FileManagerPanel` therefore routes Escape here
+    /// (`assets/keymaps/default-linux.json`).
+    pub(crate) fn cancel_active_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.path_edit.is_some() {
+            self.cancel_path_edit(window, cx);
+        } else if self.rename_state.is_some() {
+            self.cancel_rename(window, cx);
+        } else if self.search_query.is_some() {
+            self.toggle_search(window, cx);
+        }
+    }
+
+    /// Confirms whatever inline input currently has the focus, or opens the
+    /// selected entry when nothing is being edited.
+    ///
+    /// Enter is bound to this instead of `Open`: the default keymap binds
+    /// `enter` to `menu::Confirm` and key bindings are dispatched before the
+    /// text fields' own key handlers, so the fields cannot confirm themselves.
+    pub(crate) fn confirm_active_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.path_edit.is_some() {
+            self.confirm_path_edit(window, cx);
+        } else if self.rename_state.is_some() {
+            self.confirm_rename(window, cx);
+        } else {
+            self.open_selected(window, cx);
         }
     }
 

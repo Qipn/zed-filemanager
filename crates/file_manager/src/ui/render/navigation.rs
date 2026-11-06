@@ -367,10 +367,18 @@ pub(super) fn render_address_bar(
         )
         .child(crumbs)
         .child(
-            IconButton::new("file-manager-edit-path", IconName::ChevronDown)
-                .icon_size(IconSize::XSmall)
-                .tooltip(Tooltip::text("Edit location (Ctrl+L)"))
-                .on_click(cx.listener(|this, _, window, cx| this.begin_path_edit(window, cx))),
+            // The chevron re-enters the edit mode. It stops the mouse-down so the
+            // panel root's background handler does not cancel the edit first.
+            div()
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .child(
+                    IconButton::new("file-manager-edit-path", IconName::ChevronDown)
+                        .icon_size(IconSize::XSmall)
+                        .tooltip(Tooltip::text("Edit location (Ctrl+L)"))
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.begin_path_edit(window, cx)),
+                        ),
+                ),
         )
         .into_any_element()
 }

@@ -90,6 +90,72 @@ async fn test_typing_in_the_search_field(cx: &mut TestAppContext) {
     });
 }
 
+/// The location entry can be cancelled and confirmed by the panel's actions.
+///
+/// Escape and Enter never reach the text fields directly: the default keymap
+/// binds them (`menu::Cancel` / `menu::Confirm`) and key bindings are dispatched
+/// before the fields' `on_key_down` listeners. The `FileManagerPanel` context
+/// therefore routes both to `CancelInput` / `ConfirmInput`.
+#[gpui::test]
+async fn test_cancel_and_confirm_the_location_entry(cx: &mut TestAppContext) {
+    init_globals(cx);
+
+    let fs = fs::FakeFs::new(cx.background_executor.clone());
+    let project = Project::test(fs.clone(), ["/".as_ref()], cx).await;
+
+    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        FileManagerPanel::new(workspace, window, cx)
+    });
+
+    let window = cx.update(|_window, cx| {
+        cx.open_window(WindowOptions::default(), |_window, _cx| panel.clone())
+            .expect("failed to open the test window")
+    });
+    let window = window.into();
+
+    // Opening the editor fills it with the current path and selects it.
+    cx.update_window(window, |_, window, cx| {
+        panel.update(cx, |panel, cx| panel.begin_path_edit(window, cx));
+    })
+    .unwrap();
+    panel.read_with(cx, |panel, cx| {
+        assert!(panel.path_edit.is_some(), "the editor is open");
+        assert!(
+            !panel.path_field.read(cx).content().is_empty(),
+            "the entry is prefilled with the current path"
+        );
+    });
+
+    // `CancelInput` closes it without navigating.
+    cx.update_window(window, |_, window, cx| {
+        panel.update(cx, |panel, cx| panel.cancel_active_input(window, cx));
+    })
+    .unwrap();
+    panel.read_with(cx, |panel, _cx| {
+        assert!(panel.path_edit.is_none(), "CancelInput closes the editor");
+    });
+
+    // `ConfirmInput` goes through `confirm_path_edit`; an empty entry keeps the
+    // editor open instead of navigating somewhere undefined.
+    cx.update_window(window, |_, window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.begin_path_edit(window, cx);
+            panel
+                .path_field
+                .update(cx, |field, cx| field.set_text("", window, cx));
+            panel.confirm_active_input(window, cx);
+        });
+    })
+    .unwrap();
+    panel.read_with(cx, |panel, _cx| {
+        assert!(
+            panel.path_edit.is_some(),
+            "an empty path keeps the editor open"
+        );
+    });
+}
+
 /// The icon grid view and the details pane render as well.
 #[gpui::test]
 async fn test_render_grid_and_details_pane(cx: &mut TestAppContext) {

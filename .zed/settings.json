@@ -51,6 +51,20 @@
         "procMacro": {
           "processes": 4,
         },
+        // Only check the package that is actually open. The full
+        // `cargo check --workspace --all-targets` on this repository needs
+        // 6-8 GB of RAM (it has already taken the GNOME session down with an
+        // OOM) and takes minutes.
+        "check": {
+          "workspace": false,
+          "command": "check",
+        },
+        // Keep rust-analyzer's artifacts out of `target/`. Cargo takes an
+        // exclusive lock on that directory, so `script/build-zed` would
+        // otherwise wait for every background check to finish.
+        "cargo": {
+          "targetDir": true,
+        },
       },
     },
   },
