@@ -829,6 +829,56 @@ async fn test_grid_hides_expanded_children(cx: &mut TestAppContext) {
     });
 }
 
+/// The details view's columns can be resized and hidden, and both survive a
+/// restart.
+#[gpui::test]
+async fn test_columns_resize_and_persist(cx: &mut TestAppContext) {
+    use crate::ui::ox_theme::metrics;
+    use crate::ui::panel::columns::Column;
+    use gpui::{Bounds, point, px, size};
+
+    init_globals(cx);
+
+    let fs = fs::FakeFs::new(cx.background_executor.clone());
+    let project = Project::test(fs.clone(), ["/".as_ref()], cx).await;
+    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        FileManagerPanel::new(workspace, window, cx)
+    });
+
+    panel.update(cx, |panel, cx| {
+        assert_eq!(panel.column_width(Column::Type), metrics::COLUMN_TYPE);
+
+        // A 1000px header: `Name` gets `1000 - (176 + 135 + 90) - 14 = 585`,
+        // so the `Type` column starts at 585 + 176 = 761.
+        let header = Bounds::new(point(px(0.), px(0.)), size(px(1000.), px(38.)));
+        panel.resize_column_at(Column::Type, 961., header, cx);
+        assert_eq!(panel.column_width(Column::Type), 200.);
+
+        // Dragging past the limits clamps instead of collapsing the column.
+        panel.resize_column_at(Column::Size, 10., header, cx);
+        assert_eq!(
+            panel.column_width(Column::Size),
+            crate::ui::panel::columns::MIN_COLUMN_WIDTH
+        );
+
+        // Column visibility is a toggle, and it is part of the persisted state.
+        panel.toggle_column(Column::Modified, cx);
+        assert!(!panel.columns_shown[Column::Modified.index()]);
+        assert!(!panel.is_column_shown(Column::Modified));
+    });
+
+    panel.read_with(cx, |panel, _cx| {
+        let state = panel.persisted_state();
+        assert_eq!(state.column_widths[Column::Type.index()], 200.);
+        assert_eq!(
+            state.column_widths[Column::Size.index()],
+            crate::ui::panel::columns::MIN_COLUMN_WIDTH
+        );
+        assert!(!state.columns_shown[Column::Modified.index()]);
+    });
+}
+
 /// `Open as Workspace` acts on the selected folder, and on the folder being
 /// browsed when the selection is empty or not a folder.
 #[gpui::test]

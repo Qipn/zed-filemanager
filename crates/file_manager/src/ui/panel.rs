@@ -3,6 +3,7 @@
 //! builders in `panel/menus.rs`.
 
 mod bookmarks;
+pub(crate) mod columns;
 mod file_ops;
 mod history;
 mod layout;
@@ -180,6 +181,11 @@ pub struct FileManagerPanel {
     /// Total and available bytes of the drive that holds the current folder, for
     /// the status bar's capacity bar (`None` while unknown or remote).
     pub(crate) disk_space: Option<(u64, u64)>,
+    /// Widths of the details view's `Date modified` / `Type` / `Size` columns.
+    pub(crate) column_widths: [f32; 3],
+    /// Whether each of those columns is shown (the user's choice; the responsive
+    /// breakpoints additionally drop the ones a narrow dock cannot fit).
+    pub(crate) columns_shown: [bool; 3],
 }
 
 // The drag payloads live in their own module; re-exported so the views keep
@@ -259,6 +265,8 @@ impl FileManagerPanel {
             last_revealed: None,
             content_width: None,
             disk_space: None,
+            column_widths: state.column_widths,
+            columns_shown: state.columns_shown,
         });
 
         panel.update(cx, |panel, cx| {

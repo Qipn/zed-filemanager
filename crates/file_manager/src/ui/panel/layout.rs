@@ -126,16 +126,6 @@ impl FileManagerPanel {
         self.sidebar_width.min(max).max(MIN_SIDEBAR_WIDTH)
     }
 
-    /// Whether the `Date modified` column fits.
-    pub(crate) fn is_modified_column_shown(&self) -> bool {
-        self.breakpoint_width() >= 640.
-    }
-
-    /// Whether the `Type` column fits (OpenXplorer drops it at ≤ 680).
-    pub(crate) fn is_type_column_shown(&self) -> bool {
-        self.breakpoint_width() >= 760.
-    }
-
     /// Whether the header bar's view controls fit.
     ///
     /// GNOME Files exposes `show-view-controls` on its toolbar (which the

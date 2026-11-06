@@ -11,6 +11,7 @@ use ui::prelude::*;
 use workspace::OpenMode;
 
 use super::{DeployedContextMenu, FileManagerPanel};
+use crate::ui::panel::columns::Column;
 use crate::ui::places::is_trash_path;
 use crate::ui::views::ViewMode;
 use crate::{
@@ -501,124 +502,164 @@ impl FileManagerPanel {
         let sort_mode = self.sort_mode;
         let show_hidden = self.show_hidden;
         let details_pane_visible = self.details_pane_visible;
+        // Column visibility is a user choice, the same one Nautilus puts behind
+        // its column chooser; the labels carry the check mark like the entries
+        // above.
+        let column_labels: Vec<(&'static str, Column, bool)> = Column::ALL
+            .iter()
+            .map(|column| {
+                let shown = self.columns_shown[column.index()];
+                (column.label(), *column, shown)
+            })
+            .collect();
 
         self.deploy_menu(
             position,
             move |menu, _, _| {
-                menu.entry("Smaller icons", None, {
-                    let panel = panel.clone();
-                    move |_, cx| {
-                        panel.update(cx, |state, cx| state.decrease_icon_size(cx));
+                let mut menu = menu
+                    .entry("Smaller icons", None, {
+                        let panel = panel.clone();
+                        move |_, cx| {
+                            panel.update(cx, |state, cx| state.decrease_icon_size(cx));
+                        }
+                    })
+                    .entry("Larger icons", None, {
+                        let panel = panel.clone();
+                        move |_, cx| {
+                            panel.update(cx, |state, cx| state.increase_icon_size(cx));
+                        }
+                    })
+                    .separator()
+                    .entry(
+                        if sort_mode.is_name() {
+                            "Sort by name ✓"
+                        } else {
+                            "Sort by name"
+                        },
+                        None,
+                        {
+                            let panel = panel.clone();
+                            move |window, cx| {
+                                panel.update(cx, |state, cx| state.sort_by_name(window, cx));
+                            }
+                        },
+                    )
+                    .entry(
+                        if sort_mode.is_modified() {
+                            "Sort by date modified ✓"
+                        } else {
+                            "Sort by date modified"
+                        },
+                        None,
+                        {
+                            let panel = panel.clone();
+                            move |window, cx| {
+                                panel.update(cx, |state, cx| state.sort_by_modified(window, cx));
+                            }
+                        },
+                    )
+                    .entry(
+                        if sort_mode.is_size() {
+                            "Sort by size ✓"
+                        } else {
+                            "Sort by size"
+                        },
+                        None,
+                        {
+                            let panel = panel.clone();
+                            move |window, cx| {
+                                panel.update(cx, |state, cx| state.sort_by_size(window, cx));
+                            }
+                        },
+                    )
+                    .separator()
+                    .entry(
+                        if show_hidden {
+                            "Hide hidden files"
+                        } else {
+                            "Show hidden files"
+                        },
+                        None,
+                        {
+                            let panel = panel.clone();
+                            move |window, cx| {
+                                panel.update(cx, |state, cx| state.toggle_hidden(window, cx));
+                            }
+                        },
+                    )
+                    .separator()
+                    .entry(
+                        if view_mode == ViewMode::Details {
+                            "List view ✓"
+                        } else {
+                            "List view"
+                        },
+                        None,
+                        {
+                            let panel = panel.clone();
+                            move |_, cx| {
+                                panel.update(cx, |state, cx| {
+                                    state.set_view_mode(ViewMode::Details, cx)
+                                });
+                            }
+                        },
+                    )
+                    .entry(
+                        if view_mode == ViewMode::Grid {
+                            "Grid view ✓"
+                        } else {
+                            "Grid view"
+                        },
+                        None,
+                        {
+                            let panel = panel.clone();
+                            move |_, cx| {
+                                panel.update(cx, |state, cx| {
+                                    state.set_view_mode(ViewMode::Grid, cx)
+                                });
+                            }
+                        },
+                    )
+                    .entry(
+                        if details_pane_visible {
+                            "Hide details pane"
+                        } else {
+                            "Show details pane"
+                        },
+                        None,
+                        {
+                            let panel = panel.clone();
+                            move |_, cx| {
+                                panel.update(cx, |state, cx| state.toggle_details_pane(cx));
+                            }
+                        },
+                    );
+
+                // Which columns the details view shows. Only meaningful in the
+                // list view, so the block is hidden for the grid.
+                if view_mode == ViewMode::Details {
+                    menu = menu.separator();
+                    for (label, column, shown) in column_labels {
+                        let panel = panel.clone();
+                        menu = menu.entry(
+                            if shown {
+                                format!("{label} column ✓")
+                            } else {
+                                format!("{label} column")
+                            },
+                            None,
+                            move |_, cx| {
+                                panel.update(cx, |state, cx| state.toggle_column(column, cx));
+                            },
+                        );
                     }
-                })
-                .entry("Larger icons", None, {
                     let panel = panel.clone();
-                    move |_, cx| {
-                        panel.update(cx, |state, cx| state.increase_icon_size(cx));
-                    }
-                })
-                .separator()
-                .entry(
-                    if sort_mode.is_name() {
-                        "Sort by name ✓"
-                    } else {
-                        "Sort by name"
-                    },
-                    None,
-                    {
-                        let panel = panel.clone();
-                        move |window, cx| {
-                            panel.update(cx, |state, cx| state.sort_by_name(window, cx));
-                        }
-                    },
-                )
-                .entry(
-                    if sort_mode.is_modified() {
-                        "Sort by date modified ✓"
-                    } else {
-                        "Sort by date modified"
-                    },
-                    None,
-                    {
-                        let panel = panel.clone();
-                        move |window, cx| {
-                            panel.update(cx, |state, cx| state.sort_by_modified(window, cx));
-                        }
-                    },
-                )
-                .entry(
-                    if sort_mode.is_size() {
-                        "Sort by size ✓"
-                    } else {
-                        "Sort by size"
-                    },
-                    None,
-                    {
-                        let panel = panel.clone();
-                        move |window, cx| {
-                            panel.update(cx, |state, cx| state.sort_by_size(window, cx));
-                        }
-                    },
-                )
-                .separator()
-                .entry(
-                    if show_hidden {
-                        "Hide hidden files"
-                    } else {
-                        "Show hidden files"
-                    },
-                    None,
-                    {
-                        let panel = panel.clone();
-                        move |window, cx| {
-                            panel.update(cx, |state, cx| state.toggle_hidden(window, cx));
-                        }
-                    },
-                )
-                .separator()
-                .entry(
-                    if view_mode == ViewMode::Details {
-                        "List view ✓"
-                    } else {
-                        "List view"
-                    },
-                    None,
-                    {
-                        let panel = panel.clone();
-                        move |_, cx| {
-                            panel
-                                .update(cx, |state, cx| state.set_view_mode(ViewMode::Details, cx));
-                        }
-                    },
-                )
-                .entry(
-                    if view_mode == ViewMode::Grid {
-                        "Grid view ✓"
-                    } else {
-                        "Grid view"
-                    },
-                    None,
-                    {
-                        let panel = panel.clone();
-                        move |_, cx| {
-                            panel.update(cx, |state, cx| state.set_view_mode(ViewMode::Grid, cx));
-                        }
-                    },
-                )
-                .entry(
-                    if details_pane_visible {
-                        "Hide details pane"
-                    } else {
-                        "Show details pane"
-                    },
-                    None,
-                    {
-                        let panel = panel.clone();
-                        move |_, cx| {
-                            panel.update(cx, |state, cx| state.toggle_details_pane(cx));
-                        }
-                    },
-                )
+                    menu = menu.entry("Reset column widths", None, move |_, cx| {
+                        panel.update(cx, |state, cx| state.reset_column_widths(cx));
+                    });
+                }
+
+                menu
             },
             window,
             cx,

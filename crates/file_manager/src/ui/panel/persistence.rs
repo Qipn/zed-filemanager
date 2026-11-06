@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use util::ResultExt;
 
 use super::FileManagerPanel;
+use super::columns::{Column, MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH};
 use super::layout::{MAX_SIDEBAR_SPLIT, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_SPLIT, MIN_SIDEBAR_WIDTH};
 use crate::model::entries::SortMode;
 use crate::ui::ox_theme::metrics;
@@ -59,6 +60,10 @@ pub(crate) struct PersistedState {
     pub(crate) view_mode: ViewMode,
     /// The index of the icon size in the grid view.
     pub(crate) icon_size: usize,
+    /// Widths of the details view's `Date modified` / `Type` / `Size` columns.
+    pub(crate) column_widths: [f32; 3],
+    /// Whether those columns are shown.
+    pub(crate) columns_shown: [bool; 3],
 }
 
 impl Default for PersistedState {
@@ -72,6 +77,8 @@ impl Default for PersistedState {
             sort_mode: SortMode::default(),
             view_mode: ViewMode::default(),
             icon_size: metrics::DEFAULT_ICON_SIZE,
+            column_widths: Column::ALL.map(Column::default_width),
+            columns_shown: [true; 3],
         }
     }
 }
@@ -101,6 +108,12 @@ impl PersistedState {
         self.icon_size = self
             .icon_size
             .min(metrics::ICON_SIZES.len().saturating_sub(1));
+        for width in &mut self.column_widths {
+            if !width.is_finite() {
+                *width = metrics::COLUMN_MODIFIED;
+            }
+            *width = width.clamp(MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH);
+        }
         self
     }
 }
@@ -136,6 +149,8 @@ impl FileManagerPanel {
             sort_mode: self.sort_mode,
             view_mode: self.view_mode,
             icon_size: self.icon_size,
+            column_widths: self.column_widths,
+            columns_shown: self.columns_shown,
         }
     }
 
@@ -171,6 +186,8 @@ mod tests {
             sort_mode: SortMode::SizeDescending,
             view_mode: ViewMode::Grid,
             icon_size: 9,
+            column_widths: [200., 150., 110.],
+            columns_shown: [true, false, true],
         };
 
         let json = serde_json::to_string(&state).expect("state must serialize");
@@ -256,6 +273,8 @@ mod tests {
             sort_mode: SortMode::ModifiedAscending,
             view_mode: ViewMode::Grid,
             icon_size: 2,
+            column_widths: [210., 140., 95.],
+            columns_shown: [false, true, true],
         };
 
         write_state(kvp.clone(), &key, state.clone()).await;

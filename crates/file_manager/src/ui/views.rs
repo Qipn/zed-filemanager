@@ -18,28 +18,24 @@ pub(crate) use icons::entry_icon;
 use details::render_details_list;
 use grid::render_icon_grid;
 
-use gpui::{AnyElement, Context, IntoElement, MouseButton, MouseDownEvent, Window, div, px};
+use gpui::{
+    AnyElement, Context, CursorStyle, IntoElement, MouseButton, MouseDownEvent, SharedString,
+    Window, div, px,
+};
 use theme::ActiveTheme;
 use ui::{Color, Icon, IconName, IconSize, Label, LabelSize, prelude::*};
 
+use crate::ui::drag::ColumnResizeDrag;
 use crate::ui::ox_theme::{metrics, palette};
 use crate::ui::panel::FileManagerPanel;
+use crate::ui::panel::columns::Column;
 
 /// How the contents of the current directory are shown.
 ///
 /// This is persisted in the panel state
 /// (`crate::ui::panel::persistence`), so the variant names are part of the
 /// on-disk format.
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Default,
-    serde::Serialize,
-    serde::Deserialize,
-)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ViewMode {
     /// The table-like list with the OpenXplorer columns.
@@ -99,6 +95,17 @@ pub(crate) fn render_column_header(
         .flex_shrink_0()
         .border_b_1()
         .border_color(palette.divider)
+        // One handler resizes whichever column the drag started from: the
+        // payload says which one, and the header's own bounds give the position
+        // of its left edge (`Panel::resize_column_at`).
+        .on_drag_move::<ColumnResizeDrag>(cx.listener(
+            |this, event: &gpui::DragMoveEvent<ColumnResizeDrag>, _, cx| {
+                let Some(column) = Column::from_index(event.drag(cx).column) else {
+                    return;
+                };
+                this.resize_column_at(column, f32::from(event.event.position.x), event.bounds, cx);
+            },
+        ))
         .child(
             h_flex()
                 .id("file-manager-column-name")
@@ -110,36 +117,72 @@ pub(crate) fn render_column_header(
                 }))
                 .child(title("Name", sort_mode.is_name(), false)),
         )
-        .when(this.is_modified_column_shown(), |header| {
+        .when(this.is_column_shown(Column::Modified), |header| {
             header.child(
                 h_flex()
                     .id("file-manager-column-modified")
-                    .w(px(metrics::COLUMN_MODIFIED))
+                    .relative()
+                    .w(px(this.column_width(Column::Modified)))
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.sort_by_modified(window, cx);
                     }))
-                    .child(title("Date modified", sort_mode.is_modified(), false)),
+                    .child(title("Date modified", sort_mode.is_modified(), false))
+                    .child(column_resizer(Column::Modified)),
             )
         })
-        .when(this.is_type_column_shown(), |header| {
+        .when(this.is_column_shown(Column::Type), |header| {
             header.child(
                 h_flex()
                     .id("file-manager-column-type")
-                    .w(px(metrics::COLUMN_TYPE))
-                    .child(title("Type", false, false)),
+                    .relative()
+                    .w(px(this.column_width(Column::Type)))
+                    .child(title("Type", false, false))
+                    .child(column_resizer(Column::Type)),
             )
         })
-        .child(
-            h_flex()
-                .id("file-manager-column-size")
-                .w(px(metrics::COLUMN_SIZE))
-                // The trailing padding of the last column.
-                .child(div().w(px(metrics::COLUMN_EDGE_PADDING)).flex_shrink_0())
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.sort_by_size(window, cx);
-                }))
-                .child(title("Size", sort_mode.is_size(), true)),
-        )
+        .when(this.is_column_shown(Column::Size), |header| {
+            header.child(
+                h_flex()
+                    .id("file-manager-column-size")
+                    .relative()
+                    .w(px(this.column_width(Column::Size)))
+                    // The trailing padding of the last column.
+                    .child(div().w(px(metrics::COLUMN_EDGE_PADDING)).flex_shrink_0())
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.sort_by_size(window, cx);
+                    }))
+                    .child(title("Size", sort_mode.is_size(), true))
+                    .child(column_resizer(Column::Size)),
+            )
+        })
+        .into_any_element()
+}
+
+/// The 8px grab area on a column's right edge.
+///
+/// It is positioned out of flow (and sticks 4px into the next column) so it
+/// straddles the boundary without taking width from the column: the header and
+/// the rows keep exactly the same widths, which is why the columns still line
+/// up.
+fn column_resizer(column: Column) -> AnyElement {
+    let payload = ColumnResizeDrag {
+        column: column.index(),
+    };
+    div()
+        .id(SharedString::from(format!(
+            "file-manager-column-resizer-{}",
+            column.index()
+        )))
+        .absolute()
+        .top(px(0.))
+        .right(px(-4.))
+        .w(px(8.))
+        .h_full()
+        .cursor(CursorStyle::ResizeLeftRight)
+        .on_drag(payload, |payload, _, _, cx| {
+            cx.stop_propagation();
+            cx.new(|_| *payload)
+        })
         .into_any_element()
 }
 

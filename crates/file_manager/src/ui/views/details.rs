@@ -12,6 +12,7 @@ use ui::{Color, Icon, IconName, IconSize, Label, LabelSize, prelude::*};
 use crate::model::entries::DirEntry;
 use crate::ui::drag::DragGhost;
 use crate::ui::ox_theme::{metrics, palette};
+use crate::ui::panel::columns::Column;
 use crate::ui::panel::{DraggedPaths, FileManagerPanel};
 use crate::ui::views::format::{format_modified, type_label};
 pub(super) fn render_details_list(
@@ -181,9 +182,9 @@ pub(super) fn render_details_row(
                 }),
         )
         // Date modified column.
-        .when(this.is_modified_column_shown(), |row| {
+        .when(this.is_column_shown(Column::Modified), |row| {
             row.child(
-                h_flex().w(px(metrics::COLUMN_MODIFIED)).child(
+                h_flex().w(px(this.column_width(Column::Modified))).child(
                     Label::new(format_modified(entry.mtime))
                         .single_line()
                         .size(LabelSize::Small)
@@ -192,9 +193,9 @@ pub(super) fn render_details_row(
             )
         })
         // Type column.
-        .when(this.is_type_column_shown(), |row| {
+        .when(this.is_column_shown(Column::Type), |row| {
             row.child(
-                h_flex().w(px(metrics::COLUMN_TYPE)).child(
+                h_flex().w(px(this.column_width(Column::Type))).child(
                     Label::new(type_label(&entry))
                         .single_line()
                         .size(LabelSize::Small)
@@ -203,25 +204,27 @@ pub(super) fn render_details_row(
             )
         })
         // Size column, right aligned.
-        .child(
-            h_flex()
-                .id("file-manager-column-size")
-                .w(px(metrics::COLUMN_SIZE))
-                // The trailing padding of the last column.
-                .child(div().w(px(metrics::COLUMN_EDGE_PADDING)).flex_shrink_0())
-                .justify_end()
-                .child(
-                    Label::new(
-                        entry
-                            .len
-                            .map(crate::model::entries::format_len)
-                            .unwrap_or_default(),
-                    )
-                    .single_line()
-                    .size(LabelSize::Small)
-                    .color(Color::Custom(palette.muted)),
-                ),
-        )
+        .when(this.is_column_shown(Column::Size), |row| {
+            row.child(
+                h_flex()
+                    .id("file-manager-column-size")
+                    .w(px(this.column_width(Column::Size)))
+                    // The trailing padding of the last column.
+                    .child(div().w(px(metrics::COLUMN_EDGE_PADDING)).flex_shrink_0())
+                    .justify_end()
+                    .child(
+                        Label::new(
+                            entry
+                                .len
+                                .map(crate::model::entries::format_len)
+                                .unwrap_or_default(),
+                        )
+                        .single_line()
+                        .size(LabelSize::Small)
+                        .color(Color::Custom(palette.muted)),
+                    ),
+            )
+        })
         .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
             // Clicking elsewhere cancels an active rename.
             if this.rename_state.is_some() {

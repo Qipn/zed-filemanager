@@ -37,6 +37,22 @@ impl Render for SidebarSplitDrag {
     }
 }
 
+/// The drag payload of a column resizer in the details view's header.
+///
+/// `column` is the column whose right edge is being dragged
+/// ([`crate::ui::panel::columns::Column`] as an index), so one `on_drag_move`
+/// handler on the header can resize whichever column the drag started from.
+#[derive(Clone, Copy)]
+pub(crate) struct ColumnResizeDrag {
+    pub(crate) column: usize,
+}
+
+impl Render for ColumnResizeDrag {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        gpui::Empty
+    }
+}
+
 /// Small floating view shown while dragging entries.
 pub(crate) struct DragGhost {
     pub(crate) labels: Vec<SharedString>,
