@@ -91,8 +91,67 @@ async fn test_typing_in_the_search_field(cx: &mut TestAppContext) {
     });
 }
 
-/// The location entry can be cancelled and confirmed by the panel's actions.
+/// The search entry accepts typing when the panel lives in a dock, not as the
+/// root view of the window.
 ///
+/// The other tests make the panel the window's root view, which never exercises
+/// the dock's focus handling: the dock owns the key context and the panel can be
+/// focused through it instead of through the root element. This mirrors the real
+/// layout (`workspace.add_panel` + dock) so "clicking search does not let me
+/// type" is covered.
+#[gpui::test]
+async fn test_typing_in_the_search_field_inside_a_dock(cx: &mut TestAppContext) {
+    init_globals(cx);
+
+    let fs = fs::FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree("/home/alice", serde_json::json!({ "projects": {} }))
+        .await;
+    let project = Project::test(fs.clone(), ["/home/alice".as_ref()], cx).await;
+
+    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        let panel = FileManagerPanel::new(workspace, window, cx);
+        workspace.add_panel(panel.clone(), window, cx);
+        panel
+    });
+    let window = cx.update(|_window, cx| {
+        cx.open_window(WindowOptions::default(), |_window, _cx| workspace.clone())
+            .expect("failed to open the test window")
+    });
+    let window = window.into();
+
+    // Open and focus the dock, the way clicking its tab does.
+    cx.update_window(window, |_, window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_panel::<FileManagerPanel>(window, cx);
+            workspace.focus_panel::<FileManagerPanel>(window, cx);
+        });
+    })
+    .unwrap();
+    cx.update_window(window, |_, window, cx| {
+        let _ = window.draw(cx);
+    })
+    .unwrap();
+
+    // The search button focuses the entry; the panel may also hold the focus
+    // itself (its root element does that on every click).
+    cx.update_window(window, |_, window, cx| {
+        panel.update(cx, |panel, cx| panel.toggle_search(window, cx));
+    })
+    .unwrap();
+    TestAppContext::simulate_keystrokes(&mut *cx, window, "a b");
+
+    panel.read_with(cx, |panel, cx| {
+        assert_eq!(
+            panel.search_field.read(cx).content(),
+            "ab",
+            "typing reaches the search entry inside a dock"
+        );
+        assert_eq!(panel.search_query.as_deref(), Some("ab"));
+    });
+}
+
+/// The location entry can be cancelled and confirmed by the panel's actions.
 /// Escape and Enter never reach the text fields directly: the default keymap
 /// binds them (`menu::Cancel` / `menu::Confirm`) and key bindings are dispatched
 /// before the fields' `on_key_down` listeners. The `FileManagerPanel` context

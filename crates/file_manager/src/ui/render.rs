@@ -26,7 +26,7 @@ use conflict_banner::render_conflict_banner;
 use header::render_header_bar;
 use status_bar::render_status_bar;
 
-use gpui::{Context, IntoElement, KeyDownEvent, MouseButton, Window, canvas};
+use gpui::{Context, Focusable, IntoElement, KeyDownEvent, MouseButton, Window, canvas};
 use theme::ActiveTheme;
 use ui::prelude::*;
 
@@ -62,7 +62,17 @@ pub(super) fn render(
                 if this.rename_state.is_some() {
                     this.cancel_rename(window, cx);
                 }
-                window.focus(&this.focus_handle, cx);
+                // While the search mode is open the entry keeps the focus, like
+                // GNOME's query editor. The platform attaches its text-input
+                // handler — and with it input-method composition — to the
+                // focused element, so handing the focus back to the panel would
+                // make typing (especially IME input) stop mid-search.
+                if this.search_query.is_some() {
+                    let focus = this.search_field.read(cx).focus_handle(cx);
+                    window.focus(&focus, cx);
+                } else {
+                    window.focus(&this.focus_handle, cx);
+                }
             }),
         )
         // The sidebar resizer drags through GPUI's drag-and-drop system, like

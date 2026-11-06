@@ -199,6 +199,10 @@ impl FileManagerPanel {
     /// Backspace deletes a grapheme and printable characters are inserted at the
     /// caret; everything else (arrows, Enter, shortcuts) is left to the keymap
     /// actions, which reach the panel's `ConfirmInput` / `CancelInput` bindings.
+    ///
+    /// The text comes from [`crate::ui::search_field::typed_text`], so a
+    /// keystroke that arrives without a `key_char` (an input method forwarding
+    /// the key, a dead key, an unusual layout) still types something.
     fn forward_key_to(
         &mut self,
         field: &Entity<SearchField>,
@@ -211,17 +215,8 @@ impl FileManagerPanel {
             return;
         }
 
-        let modifiers = event.keystroke.modifiers;
-        if modifiers.control || modifiers.alt || modifiers.platform {
-            return;
-        }
-        if let Some(text) = event
-            .keystroke
-            .key_char
-            .as_deref()
-            .filter(|text| !text.is_empty())
-        {
-            field.update(cx, |field, cx| field.insert_text(text, window, cx));
+        if let Some(text) = crate::ui::search_field::typed_text(&event.keystroke) {
+            field.update(cx, |field, cx| field.insert_text(&text, window, cx));
         }
     }
 

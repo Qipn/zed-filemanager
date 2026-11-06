@@ -34,8 +34,8 @@ use std::ops::Range;
 
 use gpui::{
     App, Bounds, Context, CursorStyle, EventEmitter, FocusHandle, Focusable, KeyDownEvent,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ShapedLine,
-    SharedString, Window, px,
+    Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
+    ShapedLine, SharedString, Window, px,
 };
 use ui::prelude::*;
 use unicode_segmentation::UnicodeSegmentation;
@@ -71,7 +71,127 @@ pub(crate) struct SearchField {
     placeholder: SharedString,
 }
 
+/// What a keystroke types into the field, if anything.
+///
+/// `key_char` is the source of truth: it carries the character the layout
+/// produced and the shift case (`a`, `A`, `é`, `中`). Some paths hand a
+/// keystroke over **without** it — a key forwarded through an input method, a
+/// dead key being composed, an unusual layout — and then nothing was inserted at
+/// all, which looked like "the search box does not accept typing".
+///
+/// In that case the key name is used instead: single-character names stand for
+/// themselves and the named whitespace keys map to their character. Modifier
+/// combinations are not text (`ctrl-a`, `alt-left`), and neither are dead-key or
+/// navigation names, so they yield `None`.
+///
+/// Only used when the platform did not deliver the character: forwarding it to
+/// the platform as well would insert it twice, but there is nothing to forward
+/// when `key_char` is `None`.
+///
+/// The key-name fallback is **Linux only**. On macOS a `key_char`-less key is a
+/// key the platform hands to the input method (`gpui_macos` `handleEvent:` sends
+/// the composed text separately, e.g. `insertText:`), so inserting the key name
+/// here would duplicate it. On Linux the window system dispatches a `KeyDown`
+/// only for keys it did not consume, and there is no second insertion path.
+pub(crate) fn typed_text(keystroke: &Keystroke) -> Option<String> {
+    let modifiers = keystroke.modifiers;
+    if modifiers.control || modifiers.alt || modifiers.platform {
+        return None;
+    }
+
+    if let Some(text) = keystroke
+        .key_char
+        .as_deref()
+        .filter(|text| !text.is_empty())
+    {
+        return Some(text.to_string());
+    }
+
+    if !cfg!(target_os = "linux") {
+        return None;
+    }
+
+    match keystroke.key.as_str() {
+        "space" => Some(" ".to_string()),
+        // A single printable character names itself (letters arrive lower-case
+        // unless shift produced the upper-case keysym).
+        key => {
+            let mut characters = key.chars();
+            match (characters.next(), characters.next()) {
+                (Some(character), None) if !character.is_control() => Some(character.to_string()),
+                _ => None,
+            }
+        }
+    }
+}
+
 impl EventEmitter<SearchFieldEvent> for SearchField {}
+
+#[cfg(test)]
+mod tests {
+    use gpui::Modifiers;
+
+    use super::typed_text;
+
+    fn keystroke(key: &str, key_char: Option<&str>) -> gpui::Keystroke {
+        gpui::Keystroke {
+            key: key.to_string(),
+            key_char: key_char.map(|char| char.to_string()),
+            modifiers: Modifiers::none(),
+        }
+    }
+
+    #[test]
+    fn key_char_wins() {
+        assert_eq!(typed_text(&keystroke("a", Some("A"))).as_deref(), Some("A"));
+        assert_eq!(
+            typed_text(&keystroke("2", Some("中"))).as_deref(),
+            Some("中"),
+            "input-method output arrives through key_char"
+        );
+    }
+
+    /// Regression guard for "the search box does not accept typing": a
+    /// keystroke without `key_char` (a forwarded key, a dead key, an unusual
+    /// layout) used to insert nothing at all.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_keystroke_without_key_char_still_types() {
+        assert_eq!(typed_text(&keystroke("a", None)).as_deref(), Some("a"));
+        assert_eq!(typed_text(&keystroke("7", None)).as_deref(), Some("7"));
+        assert_eq!(
+            typed_text(&keystroke("space", None)).as_deref(),
+            Some(" "),
+            "the space key names itself"
+        );
+    }
+
+    /// macOS delivers `key_char`-less keys through the input method instead, so
+    /// the panel must not insert the key name there (it would be duplicated).
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn a_key_without_key_char_does_not_type_outside_linux() {
+        assert_eq!(typed_text(&keystroke("a", None)), None);
+    }
+
+    #[test]
+    fn named_and_modified_keys_are_not_text() {
+        for key in ["escape", "enter", "left", "dead_acute", "f5", ""] {
+            assert_eq!(typed_text(&keystroke(key, None)), None, "key {key}");
+        }
+
+        let mut control_a = keystroke("a", None);
+        control_a.modifiers = Modifiers {
+            control: true,
+            ..Modifiers::none()
+        };
+        assert_eq!(
+            typed_text(&control_a),
+            None,
+            "ctrl-a is a command, not text"
+        );
+    }
+}
 
 impl SearchField {
     pub(crate) fn new(element_id: impl Into<SharedString>, cx: &mut Context<Self>) -> Self {

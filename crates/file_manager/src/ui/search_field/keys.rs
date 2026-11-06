@@ -159,16 +159,10 @@ impl SearchField {
             // time — gpui only forwards `key_char` when the event is still
             // unhandled (`gpui_linux` x11/wayland window.rs, `gpui_macos`).
             _ => {
-                if modifiers.control || modifiers.alt || modifiers.platform {
-                    return false;
-                }
-                let Some(text) = event.keystroke.key_char.as_deref() else {
+                let Some(text) = super::typed_text(&event.keystroke) else {
                     return false;
                 };
-                if text.is_empty() {
-                    return false;
-                }
-                self.replace_text_in_range(None, text, window, cx);
+                self.replace_text_in_range(None, &text, window, cx);
                 true
             }
         }
