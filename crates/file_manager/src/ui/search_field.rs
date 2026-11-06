@@ -131,6 +131,41 @@ impl SearchField {
         cx.emit(SearchFieldEvent::Change);
     }
 
+    /// Copies the selection to the clipboard.
+    pub(crate) fn copy_selection(&mut self, cx: &mut Context<Self>) {
+        if self.selected_range.is_empty() {
+            return;
+        }
+        cx.write_to_clipboard(ClipboardItem::new_string(
+            self.content[self.selected_range.clone()].to_string(),
+        ));
+    }
+
+    /// Copies the selection and deletes it.
+    pub(crate) fn cut_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.selected_range.is_empty() {
+            return;
+        }
+        self.copy_selection(cx);
+        self.replace_text_in_range(None, "", window, cx);
+    }
+
+    /// Inserts the clipboard text at the selection (newlines become spaces, so a
+    /// pasted file path list cannot break the single-line field).
+    pub(crate) fn paste(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+            self.replace_text_in_range(None, &text.replace('\n', " "), window, cx);
+        }
+    }
+
+    /// Selects the whole text.
+    pub(crate) fn select_all_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.selected_range = 0..self.content.len();
+        self.selection_reversed = false;
+        window.notify_text_selection_changed(&self.focus_handle);
+        cx.notify();
+    }
+
     fn cursor_offset(&self) -> usize {
         if self.selection_reversed {
             self.selected_range.start
@@ -307,33 +342,19 @@ impl SearchField {
                 true
             }
             "a" if modifiers.control => {
-                self.selected_range = 0..self.content.len();
-                self.selection_reversed = false;
-                window.notify_text_selection_changed(&self.focus_handle);
-                cx.notify();
+                self.select_all_text(window, cx);
                 true
             }
             "c" if modifiers.control => {
-                if !self.selected_range.is_empty() {
-                    cx.write_to_clipboard(ClipboardItem::new_string(
-                        self.content[self.selected_range.clone()].to_string(),
-                    ));
-                }
+                self.copy_selection(cx);
                 true
             }
             "x" if modifiers.control => {
-                if !self.selected_range.is_empty() {
-                    cx.write_to_clipboard(ClipboardItem::new_string(
-                        self.content[self.selected_range.clone()].to_string(),
-                    ));
-                    self.replace_text_in_range(None, "", window, cx);
-                }
+                self.cut_selection(window, cx);
                 true
             }
             "v" if modifiers.control => {
-                if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-                    self.replace_text_in_range(None, &text.replace('\n', " "), window, cx);
-                }
+                self.paste(window, cx);
                 true
             }
             // Typed characters normally arrive through the platform's text

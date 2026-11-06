@@ -96,8 +96,14 @@ impl FileManagerPanel {
     }
 
     /// Selects every visible row, like GNOME Files' "Select All" in the
-    /// background context menu (`Ctrl+A`).
-    pub(crate) fn select_all(&mut self, cx: &mut Context<Self>) {
+    /// background context menu (`Ctrl+A`). With an inline editor focused the
+    /// selection is the editor's text instead.
+    pub(crate) fn select_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(field) = self.focused_text_field(window, cx) {
+            field.update(cx, |field, cx| field.select_all_text(window, cx));
+            return;
+        }
+
         let rows = self.visible_rows();
         self.selected = rows.iter().map(|(entry, _)| entry.path.clone()).collect();
         self.selection_anchor = (!rows.is_empty()).then_some(0);

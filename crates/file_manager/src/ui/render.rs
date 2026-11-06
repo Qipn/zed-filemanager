@@ -95,11 +95,11 @@ pub(super) fn render(
         .on_action(cx.listener(|this, _: &Rename, window, cx| {
             this.rename_selected(window, cx);
         }))
-        .on_action(cx.listener(|this, _: &Copy, _, cx| {
-            this.copy_selected(cx);
+        .on_action(cx.listener(|this, _: &Copy, window, cx| {
+            this.copy_selected(window, cx);
         }))
-        .on_action(cx.listener(|this, _: &Cut, _, cx| {
-            this.cut_selected(cx);
+        .on_action(cx.listener(|this, _: &Cut, window, cx| {
+            this.cut_selected(window, cx);
         }))
         .on_action(cx.listener(|this, _: &Paste, window, cx| {
             this.paste_clipboard(window, cx);
@@ -128,8 +128,8 @@ pub(super) fn render(
         .on_action(cx.listener(|this, _: &ToggleBookmark, _, cx| {
             this.toggle_bookmark(cx);
         }))
-        .on_action(cx.listener(|this, _: &SelectAll, _, cx| {
-            this.select_all(cx);
+        .on_action(cx.listener(|this, _: &SelectAll, window, cx| {
+            this.select_all(window, cx);
         }))
         // Escape is claimed by the default keymap (`escape` → `menu::Cancel`),
         // which runs before the text fields' own key handlers, so the panel

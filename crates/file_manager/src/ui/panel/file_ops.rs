@@ -8,14 +8,70 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use fs::{CreateOptions, RemoveOptions, RenameOptions};
-use gpui::{Context, PromptLevel, Window};
+use gpui::{App, Context, Entity, PromptLevel, Window};
 use util::ResultExt;
 
 use super::FileManagerPanel;
 use crate::model::clipboard::{Clipboard, RenameState};
 use crate::model::undo::{Change, HistoryStep};
+use crate::ui::search_field::SearchField;
 
 impl FileManagerPanel {
+    /// The inline text field that currently has the keyboard focus, if any.
+    ///
+    /// Copy/cut/paste/select-all are bound in the `FileManagerPanel` key context
+    /// (`default-linux.json`), and key bindings run before the fields' own key
+    /// handlers. The actions therefore have to forward to the focused field,
+    /// otherwise Ctrl+C copies the selected *files* while the user is editing a
+    /// path.
+    pub(crate) fn focused_text_field(
+        &self,
+        window: &Window,
+        cx: &App,
+    ) -> Option<Entity<SearchField>> {
+        for field in [&self.path_field, &self.rename_field, &self.search_field] {
+            if field.read(cx).focus_handle(cx).is_focused(window) {
+                return Some(field.clone());
+            }
+        }
+        None
+    }
+
+    /// Copies either the text selection of a focused field or the selected files.
+    pub(crate) fn copy_selected(&mut self, window: &Window, cx: &mut Context<Self>) {
+        if let Some(field) = self.focused_text_field(window, cx) {
+            field.update(cx, |field, cx| field.copy_selection(cx));
+            return;
+        }
+
+        let paths: Vec<PathBuf> = self
+            .selected_entries()
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect();
+        if !paths.is_empty() {
+            self.clipboard = Some(Clipboard::Copied(paths));
+            cx.notify();
+        }
+    }
+
+    /// Cuts either the text selection of a focused field or the selected files.
+    pub(crate) fn cut_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(field) = self.focused_text_field(window, cx) {
+            field.update(cx, |field, cx| field.cut_selection(window, cx));
+            return;
+        }
+
+        let paths: Vec<PathBuf> = self
+            .selected_entries()
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect();
+        if !paths.is_empty() {
+            self.clipboard = Some(Clipboard::Cut(paths));
+            cx.notify();
+        }
+    }
     fn unique_child_name(&self, base: &str) -> String {
         let mut index = 2;
         let mut candidate = base.to_string();
@@ -391,31 +447,15 @@ impl FileManagerPanel {
             cx.notify();
         }
     }
-    pub(crate) fn copy_selected(&mut self, cx: &mut Context<Self>) {
-        let paths: Vec<PathBuf> = self
-            .selected_entries()
-            .into_iter()
-            .map(|entry| entry.path)
-            .collect();
-        if !paths.is_empty() {
-            self.clipboard = Some(Clipboard::Copied(paths));
-            cx.notify();
-        }
-    }
-
-    pub(crate) fn cut_selected(&mut self, cx: &mut Context<Self>) {
-        let paths: Vec<PathBuf> = self
-            .selected_entries()
-            .into_iter()
-            .map(|entry| entry.path)
-            .collect();
-        if !paths.is_empty() {
-            self.clipboard = Some(Clipboard::Cut(paths));
-            cx.notify();
-        }
-    }
 
     pub(crate) fn paste_clipboard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Editing a path/search/name: paste the text into the field instead of
+        // starting a file transfer.
+        if let Some(field) = self.focused_text_field(window, cx) {
+            field.update(cx, |field, cx| field.paste(window, cx));
+            return;
+        }
+
         let Some(clipboard) = self.clipboard.clone() else {
             return;
         };
