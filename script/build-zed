@@ -1,0 +1,283 @@
+#!/usr/bin/env bash
+# Purpose: build Zed on a NixOS/Nix host with the system libraries and WebRTC
+# that the repository's Nix setup provides.
+#
+# Usage:
+#   script/build-zed                 # debug build of zed
+#   script/build-zed --release       # release build
+#   script/build-zed --check         # cargo check instead of build
+#   script/build-zed --run           # build, then start target/<profile>/zed
+#   script/build-zed --no-nix        # do not enter nix-shell automatically
+#   script/build-zed -- <cargo args> # extra arguments passed to cargo
+#
+# Why:
+#   A plain `cargo build` on NixOS has an empty PKG_CONFIG_PATH, so `x11.pc`
+#   is not found.  It also uses the host Rust instead of the repository's
+#   pinned toolchain.  This script enters a nix-shell with the native libraries,
+#   points PKG_CONFIG_PATH at the Nix package configs, and reuses a local
+#   WebRTC archive instead of downloading it from GitHub.
+#
+# Created: 2026-11-03
+
+set -euo pipefail
+
+SCRIPT_PATH=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/$(basename -- "${BASH_SOURCE[0]}")
+ROOT=$(cd -- "$(dirname -- "$SCRIPT_PATH")/.." && pwd)
+cd "$ROOT"
+
+ORIGINAL_ARGS=("$@")
+
+PROFILE=debug
+CHECK=0
+RUN=0
+TEST=0
+NO_NIX=0
+DRY_RUN=0
+CARGO_EXTRA=()
+
+usage() {
+    cat <<'EOF'
+Usage: script/build-zed [options] [-- cargo-args]
+
+Options:
+  --release       build with the release profile
+  --debug         build with the debug profile (default)
+  --check         run cargo check instead of build
+  --test          run cargo test (pass the package with -- -p <package>)
+  --run           build, then start target/<profile>/zed
+  run             alias for --run (can be used as a subcommand)
+  --no-nix        do not enter nix-shell automatically
+  --dry-run       print the environment and cargo command only
+  -h, --help      show this help
+
+Examples:
+  script/build-zed
+  script/build-zed run
+  script/build-zed --release --run
+  script/build-zed run --release
+  script/build-zed --check
+  script/build-zed --check --dry-run
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --release)
+            PROFILE=release
+            shift
+            ;;
+        --debug)
+            PROFILE=debug
+            shift
+            ;;
+        --check)
+            CHECK=1
+            shift
+            ;;
+        --test)
+            TEST=1
+            shift
+            ;;
+        --run)
+            RUN=1
+            shift
+            ;;
+        run)
+            RUN=1
+            shift
+            ;;
+        --no-nix)
+            NO_NIX=1
+            shift
+            ;;
+        --dry-run)
+            DRY_RUN=1
+            shift
+            ;;
+        --)
+            shift
+            CARGO_EXTRA+=("$@")
+            break
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            CARGO_EXTRA+=("$1")
+            shift
+            ;;
+    esac
+done
+
+if [[ "$RUN" == 1 && "$CHECK" == 1 ]]; then
+    echo "error: --run/run cannot be combined with --check." >&2
+    exit 2
+fi
+
+NIX_PACKAGES=(
+    pkg-config
+    libx11 libxcursor libxrandr libxi libxext libxscrnsaver xorgproto libxcb
+    libxkbcommon.dev
+    wayland wayland-protocols
+    fontconfig freetype alsa-lib openssl libgit2 zstd.dev sqlite libsoup_3
+    vulkan-loader libva pipewire libGL libsecret
+    clang lld cmake gcc gnumake
+    unzip
+)
+
+if [[ "$NO_NIX" != 1 ]] && ! pkg-config --exists x11 >/dev/null 2>&1; then
+    if [[ "${BUILD_ZED_SKIP_NIX:-0}" == 1 ]]; then
+        echo "error: x11.pc is still missing inside the Nix shell." >&2
+        echo "hint: check PKG_CONFIG_PATH_FOR_TARGET / PKG_CONFIG_PATH." >&2
+        exit 1
+    fi
+
+    if ! command -v nix-shell >/dev/null 2>&1; then
+        echo "error: x11.pc is missing and nix-shell was not found." >&2
+        echo "Install the X11/Wayland development libraries, or run this script inside a Nix shell." >&2
+        exit 1
+    fi
+
+    echo "x11.pc is missing; entering a nix-shell with the build inputs..."
+    REEXEC_CMD=$(printf '%q ' "$SCRIPT_PATH" "${ORIGINAL_ARGS[@]}")
+    exec env BUILD_ZED_SKIP_NIX=1 nix-shell -p "${NIX_PACKAGES[@]}" --run "$REEXEC_CMD"
+fi
+
+if [[ -n "${PKG_CONFIG_PATH_FOR_TARGET:-}" ]]; then
+    export PKG_CONFIG_PATH="${PKG_CONFIG_PATH_FOR_TARGET}${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+fi
+
+# GPUI loads Wayland with dlopen at runtime, so ldd does not show it.
+# Nix provides the library directories through NIX_LDFLAGS; expose them to the
+# dynamic loader when the built binary is started by this script.
+if [[ -n "${NIX_LDFLAGS:-}" ]]; then
+    for flag in $NIX_LDFLAGS; do
+        case "$flag" in
+            -L/*)
+                lib_dir="${flag#-L}"
+                case ":${LD_LIBRARY_PATH:-}:" in
+                    *":$lib_dir:"*) ;;
+                    *) LD_LIBRARY_PATH="${lib_dir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ;;
+                esac
+                ;;
+        esac
+    done
+    export LD_LIBRARY_PATH
+fi
+
+if ! pkg-config --exists x11 >/dev/null 2>&1; then
+    echo "error: x11.pc was not found." >&2
+    echo "Run inside 'nix-shell -p ${NIX_PACKAGES[*]}', or install the X11 development package." >&2
+    exit 1
+fi
+
+if command -v clang >/dev/null 2>&1; then
+    export CC="${CC:-clang}"
+    export CXX="${CXX:-clang++}"
+fi
+
+shopt -s nullglob
+rustc_candidates=(/nix/store/*-rustc-1.98.1/bin/rustc)
+cargo_candidates=(/nix/store/*-cargo-1.98.1/bin/cargo)
+
+if [[ -z "${RUSTC:-}" && ${#rustc_candidates[@]} -gt 0 ]]; then
+    export RUSTC="${rustc_candidates[0]}"
+    export RUSTDOC="$(dirname -- "$RUSTC")/rustdoc"
+fi
+
+CARGO_BIN="${CARGO:-cargo}"
+if [[ -z "${CARGO:-}" && ${#cargo_candidates[@]} -gt 0 ]]; then
+    CARGO_BIN="${cargo_candidates[0]}"
+fi
+
+if ! command -v "$CARGO_BIN" >/dev/null 2>&1; then
+    echo "error: cargo was not found." >&2
+    exit 1
+fi
+
+if ! command -v "${RUSTC:-rustc}" >/dev/null 2>&1; then
+    echo "error: rustc was not found." >&2
+    exit 1
+fi
+
+RUSTC_VERSION=$("${RUSTC:-rustc}" --version)
+case "$RUSTC_VERSION" in
+    "rustc 1.98."*) ;;
+    *)
+        echo "error: $RUSTC_VERSION does not match the repository's pinned Rust 1.98.1." >&2
+        echo "hint: run this script inside a Nix shell that provides Rust 1.98.1," >&2
+        echo "      or set RUSTC and CARGO to a 1.98.1 toolchain." >&2
+        exit 1
+        ;;
+esac
+
+WEBRTC_ROOT="$ROOT/target/webrtc"
+WEBRTC_DIR="${LK_CUSTOM_WEBRTC:-$WEBRTC_ROOT/linux-x64-release}"
+WEBRTC_ZIP="$ROOT/webrtc-linux-x64-release.zip"
+
+if [[ ! -f "$WEBRTC_DIR/lib/libwebrtc.a" ]] && [[ -f "$WEBRTC_ZIP" ]]; then
+    if ! command -v unzip >/dev/null 2>&1; then
+        echo "error: unzip is required to extract $WEBRTC_ZIP." >&2
+        exit 1
+    fi
+    echo "extracting WebRTC from $(basename -- "$WEBRTC_ZIP")..."
+    mkdir -p "$WEBRTC_ROOT"
+    unzip -q -o "$WEBRTC_ZIP" -d "$WEBRTC_ROOT"
+fi
+
+if [[ ! -f "$WEBRTC_DIR/lib/libwebrtc.a" ]]; then
+    echo "error: WebRTC was not found at $WEBRTC_DIR/lib/libwebrtc.a" >&2
+    echo "Download webrtc-linux-x64-release.zip and extract it into target/webrtc," >&2
+    echo "or set LK_CUSTOM_WEBRTC to a directory containing lib/libwebrtc.a and webrtc.ninja." >&2
+    exit 1
+fi
+
+if [[ ! -f "$WEBRTC_DIR/webrtc.ninja" ]]; then
+    echo "error: $WEBRTC_DIR/webrtc.ninja is missing." >&2
+    exit 1
+fi
+
+export LK_CUSTOM_WEBRTC="$WEBRTC_DIR"
+
+TARGET_DIR="${CARGO_TARGET_DIR:-target}"
+case "$TARGET_DIR" in
+    /*) ;;
+    *) TARGET_DIR="$ROOT/$TARGET_DIR" ;;
+esac
+
+echo "Rust:    $RUSTC_VERSION"
+echo "Cargo:   $("$CARGO_BIN" --version)"
+echo "WebRTC:  $LK_CUSTOM_WEBRTC"
+echo "Profile: $PROFILE"
+if [[ -n "${LD_LIBRARY_PATH:-}" ]]; then
+    IFS=':' read -r -a runtime_lib_dirs <<< "$LD_LIBRARY_PATH"
+    echo "Runtime libs: ${#runtime_lib_dirs[@]} directories"
+fi
+
+CARGO_ARGS=("$CARGO_BIN" build -p zed --locked)
+if [[ "$CHECK" == 1 ]]; then
+    CARGO_ARGS=("$CARGO_BIN" check -p zed --locked)
+fi
+if [[ "$TEST" == 1 ]]; then
+    # `cargo test` replaces the package filter, so the package has to be
+    # given by the caller (for example: script/build-zed --test -p file_manager).
+    CARGO_ARGS=("$CARGO_BIN" test --locked)
+fi
+if [[ "$PROFILE" == release ]]; then
+    CARGO_ARGS+=(--release)
+fi
+CARGO_ARGS+=("${CARGO_EXTRA[@]}")
+
+if [[ "$DRY_RUN" == 1 ]]; then
+    printf 'Cargo command:'
+    printf ' %q' "${CARGO_ARGS[@]}"
+    printf '\n'
+    exit 0
+fi
+
+"${CARGO_ARGS[@]}"
+
+if [[ "$RUN" == 1 && "$CHECK" != 1 ]]; then
+    exec "$TARGET_DIR/$PROFILE/zed"
+fi
