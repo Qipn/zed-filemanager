@@ -32,10 +32,22 @@ finish-args:
   # The binary is built on the host (NixOS), so its ELF interpreter and RUNPATH
   # point into `/nix/store`. The sandbox does not expose that path by default,
   # and without it the loader cannot be found (`bwrap: execvp zed: No such file
-  # or directory`). Mounting it read-only is what makes a host-built binary
-  # runnable here; it does widen the sandbox, which is the price of not
-  # rebuilding Zed inside the SDK.
-  - --filesystem=/nix/store:ro
+  # or directory`).
+  #
+  # 可写是整个 `/nix`（不只是 `store:ro`）：这样沙箱里的 `nix-shell -p …`
+  # 还能读 profile / channel（`/nix/var/nix/profiles`）、写 DB 与新建的 store 路径。
+  # 代价是 nix 这部分对沙箱完全敞开——本地开发构建可以接受，发布版应该改回
+  # `--filesystem=/nix/store:ro`。
+  - --filesystem=/nix:rw
+  # NixOS 上没有 /usr/bin/nix-shell、cc、pkg-config，它们都在系统 profile 里。
+  # 只读挂进来，配合 launcher 里改写的 PATH，Zed 自己 spawn 的进程
+  # （语言服务器、git、任务）也能用到宿主工具链。
+  - --filesystem=/run/current-system:ro
+  # 终端里的 shell 跑在宿主上（`flatpak-spawn --host`，见
+  # crates/terminal/src/terminal.rs）。没有这条权限 portal 会拒绝调用，
+  # 终端会报 `Portal call failed: ServiceUnknown`。
+  # 注意：这等于允许应用在宿主执行任意命令，隔离性基本只剩文件系统那几条。
+  - --talk-name=org.freedesktop.Flatpak
   # Zed uses git heavily: credential prompts and ssh signing go through these.
   - --talk-name=org.freedesktop.secrets
   - --socket=ssh-auth

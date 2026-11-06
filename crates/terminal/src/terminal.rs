@@ -1192,6 +1192,70 @@ impl TerminalBuilder {
             let terminal_title_override =
                 shell_params.as_ref().and_then(|e| e.title_override.clone());
 
+            // A Flatpak build runs inside a bwrap sandbox: the host toolchain
+            // (`nix-shell`, `cargo`, `cc`, …) is not on `PATH` there, so a shell
+            // started inside it cannot build anything. `flatpak-spawn --host`
+            // starts the shell on the host instead, through the session D-Bus
+            // portal — the same trick VS Code and GNOME Builder use. It needs
+            // `--talk-name=org.freedesktop.Flatpak` in the manifest.
+            //
+            // Only a few variables are forwarded: the sandbox `PATH` points at
+            // `/app/bin` and the runtime, and handing that to a host process
+            // would shadow every tool the host has. `ZED_FLATPAK_HOST_SHELL=0`
+            // turns the wrapper off.
+            let host_shell = Path::new("/.flatpak-info").exists()
+                && !matches!(
+                    std::env::var("ZED_FLATPAK_HOST_SHELL").as_deref(),
+                    Ok("0") | Ok("false")
+                );
+            let shell_params = if host_shell {
+                let mut args = vec!["--host".to_string()];
+                if let Some(directory) = working_directory.as_deref() {
+                    args.push(format!("--directory={}", directory.display()));
+                }
+                for name in [
+                    "TERM",
+                    "COLORTERM",
+                    "TERM_PROGRAM",
+                    "TERM_PROGRAM_VERSION",
+                    "ZED_TERM",
+                    "LANG",
+                    "TZ",
+                    // The launcher points this at the host's interactive bash;
+                    // without it `flatpak-spawn` would start `/bin/sh` again and
+                    // lose the user's shell configuration.
+                    "SHELL",
+                ] {
+                    if let Some(value) = env.get(name) {
+                        args.push(format!("--env={name}={value}"));
+                    }
+                }
+                match shell_params {
+                    // A shell named in the settings; the host resolves it
+                    // through its own `PATH`.
+                    Some(params) => {
+                        args.push(params.program);
+                        args.extend(params.args.unwrap_or_default());
+                    }
+                    // `Shell::System`: `flatpak-spawn` has no default shell
+                    // (it reports "No command specified"), so hand it the
+                    // `SHELL` the launcher resolved — the host's own shell when
+                    // the portal was reachable, otherwise the sandbox fallback.
+                    None => args.push(
+                        env.get("SHELL")
+                            .cloned()
+                            .unwrap_or_else(util::shell::get_system_shell),
+                    ),
+                }
+                Some(ShellParams::new(
+                    "flatpak-spawn".to_string(),
+                    Some(args),
+                    terminal_title_override.clone(),
+                ))
+            } else {
+                shell_params
+            };
+
             #[cfg(windows)]
             let shell_program = shell_params.as_ref().map(|params| {
                 use util::ResultExt;
