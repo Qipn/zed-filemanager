@@ -114,8 +114,7 @@ impl FileManagerPanel {
             // The current directory is a direct child of the root; nothing to
             // expand, but it may still need scrolling.
             self.last_revealed = Some(current);
-            self.scroll_tree_to_current();
-            cx.notify();
+            self.defer_scroll_tree_to_current(window, cx);
             return;
         }
 
@@ -165,12 +164,11 @@ impl FileManagerPanel {
                 }
             }
 
-            this.update(cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
                 if this.tree_root.as_deref() != Some(root.as_path()) {
                     return;
                 }
-                this.scroll_tree_to_current();
-                cx.notify();
+                this.defer_scroll_tree_to_current(window, cx);
             })
             .ok();
         }));
@@ -179,8 +177,11 @@ impl FileManagerPanel {
     /// Scrolls the tree so the current directory's row is visible.
     ///
     /// The tree is a plain column (not a `uniform_list`), so the offset is
-    /// computed from the row index and the fixed row pitch.
-    fn scroll_tree_to_current(&self) {
+    /// computed from the row index and the fixed row pitch. The container clamps
+    /// the offset itself during paint (`clamp_scroll_position`), so this must not
+    /// clamp against `max_offset`: on the first frame after expanding, that value
+    /// is still 0 and clamping against it would silently skip the scroll.
+    pub(crate) fn scroll_tree_to_current(&self) {
         let Some(current) = self.current_dir.as_deref() else {
             return;
         };
@@ -189,13 +190,29 @@ impl FileManagerPanel {
             return;
         };
 
-        // `py(6)` padding of the list plus one row per entry.
-        let offset = metrics::TREE_PANE_PADDING + metrics::TREE_ROW * index as f32;
-        let max = f32::from(self.tree_scroll.max_offset().y);
-        // Leave a row of context above, and never scroll past the end.
-        let y = -(offset - metrics::TREE_ROW).clamp(0., max.max(0.));
+        // `py(6)` padding of the list plus one row per entry; keep one row of
+        // context above the target.
+        let top = metrics::TREE_PANE_PADDING + metrics::TREE_ROW * index as f32;
+        let y = -(top - metrics::TREE_ROW).max(0.);
         self.tree_scroll
             .set_offset(gpui::point(gpui::px(0.), gpui::px(y)));
+    }
+
+    /// Scrolls the tree into view on the next frame.
+    ///
+    /// The rows only exist after the frame that paints the expansion, so the
+    /// scroll has to wait for it.
+    fn defer_scroll_tree_to_current(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let panel = cx.entity().downgrade();
+        cx.notify();
+        window.defer(cx, move |_window, cx| {
+            panel
+                .update(cx, |this, cx| {
+                    this.scroll_tree_to_current();
+                    cx.notify();
+                })
+                .ok();
+        });
     }
 
     /// Reads the sub-directories of `directory` into the tree.
