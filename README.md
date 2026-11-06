@@ -169,6 +169,26 @@ script/build-zed --release -- -j 4 \
   --config 'profile.release.debug=0'
 ```
 
+### 原生安装（日常开发推荐）
+
+Flatpak 那层沙箱会带来一串麻烦：没有宿主的工具链（`nix-shell` / `cc` / `pkg-config`）、
+`/etc/passwd` 被合成成 `/bin/sh`、`$SHELL` 取决于它是从哪里启动的。日常用就直接装到用户目录：
+
+```bash
+script/install-native            # 装 target/release/zed（没有则用 debug）
+script/install-native --link     # 改用符号链接：重新编译即生效，省 500 MB 拷贝
+script/install-native --uninstall
+script/install-native --dry-run
+```
+
+- 二进制叫 `~/.local/bin/zed-filemanager`，**不叫 `zed`**，免得盖掉系统里可能还留着的 1.26
+- desktop / 图标 / metainfo 落在 `~/.local/share`，应用网格里显示为 “Zed File Manager”
+- 用的是原生数据目录 `~/.local/share/zed` 与 `~/.config/zed`，不是 Flatpak 的
+  `~/.var/app/<id>`（想搬过去的设置自己拷 `settings.json` 即可）
+- 在 Flatpak 沙箱里跑这个脚本也不会装错地方：它忽略沙箱的 `XDG_DATA_HOME`
+  （那个指向 `~/.var/app/<id>/data`），直接写真实的 `$HOME`
+- 它与 Flatpak 版用同一个 app id，desktop 条目会互相覆盖（`~/.local/share` 优先）
+
 ### 打包成 Flatpak 安装到本地
 
 ```bash

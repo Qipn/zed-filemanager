@@ -1,0 +1,176 @@
+#!/usr/bin/env bash
+# Purpose: install the already-built `zed` binary as a native (non-Flatpak)
+# application: the binary in $XDG_BIN_HOME, plus desktop entry, icon and
+# metainfo in $XDG_DATA_HOME, so it shows up in the app grid.
+#
+# Usage:
+#   script/install-native                 # install target/release/zed (falls back to debug)
+#   script/install-native --binary PATH   # install that binary instead
+#   script/install-native --link          # symlink instead of copying (saves ~500 MB)
+#   script/install-native --uninstall     # remove the files this script installed
+#   script/install-native --dry-run       # print what would happen
+#
+# Why not Flatpak:
+#   The sandbox has no host toolchain (no nix-shell / cc / pkg-config on PATH),
+#   its /etc/passwd is synthesized with `/bin/sh`, and `$SHELL` depends on how
+#   the app happened to be launched. All three make the integrated terminal and
+#   `script/build-zed` misbehave. A native install removes the whole layer; the
+#   Flatpak stays useful for handing a self-contained copy to someone else.
+#
+# Created: 2026-11-07
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+APP_ID=io.github.qipn.ZedFileManager
+DESKTOP_SRC="flatpak/$APP_ID.desktop"
+METAINFO_SRC="flatpak/$APP_ID.metainfo.xml"
+ICON_SRC="crates/zed/resources/app-icon.png"
+
+# The binary must not shadow the `zed` from the system profile (the user may
+# keep the 1.26 stable around), so it gets its own name.
+NAME=zed-filemanager
+
+if [[ -f /.flatpak-info ]]; then
+    # Inside the Flatpak sandbox `XDG_DATA_HOME` points at `~/.var/app/<id>/data`,
+    # which the host session never looks at. `$HOME` is the real home (it is
+    # bind-mounted), so install into the paths the desktop actually reads.
+    BIN_DIR="$HOME/.local/bin"
+    DATA_HOME="$HOME/.local/share"
+else
+    BIN_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
+    DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+fi
+
+BINARY=""
+LINK=0
+UNINSTALL=0
+DRY_RUN=0
+
+usage() {
+    cat <<'EOF'
+Usage: script/install-native [options]
+
+Options:
+  --binary PATH   install this binary (default: target/release/zed, then target/debug/zed)
+  --link          symlink the binary instead of copying it, so a rebuild is picked up
+  --uninstall     remove the binary, desktop entry, icon and metainfo
+  --dry-run       print the actions without touching anything
+  -h, --help      show this help
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --binary) BINARY="$2"; shift 2 ;;
+        --link) LINK=1; shift ;;
+        --uninstall) UNINSTALL=1; shift ;;
+        --dry-run) DRY_RUN=1; shift ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "error: unknown argument '$1'" >&2; usage; exit 1 ;;
+    esac
+done
+
+BIN_PATH="$BIN_DIR/$NAME"
+DESKTOP_DST="$DATA_HOME/applications/$APP_ID.desktop"
+ICON_DST="$DATA_HOME/icons/hicolor/512x512/apps/$APP_ID.png"
+METAINFO_DST="$DATA_HOME/metainfo/$APP_ID.metainfo.xml"
+
+run() {
+    if [[ "$DRY_RUN" == 1 ]]; then
+        printf '+'; printf ' %q' "$@"; printf '\n'
+    else
+        "$@"
+    fi
+}
+
+if [[ "$UNINSTALL" == 1 ]]; then
+    for path in "$BIN_PATH" "$DESKTOP_DST" "$ICON_DST" "$METAINFO_DST"; do
+        if [[ -e "$path" || -L "$path" ]]; then
+            echo "removing $path"
+            run rm -f "$path"
+        fi
+    done
+    # The desktop entry may have been indexed.
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        run update-desktop-database "$DATA_HOME/applications" || true
+    fi
+    echo "done. Data in $DATA_HOME/zed and $HOME/.config/zed was left untouched."
+    exit 0
+fi
+
+# Pick the binary: an explicit --binary wins, then the release build, then the
+# debug one (so the script is useful right after `script/build-zed -- -j 4`).
+if [[ -z "$BINARY" ]]; then
+    for candidate in target/release/zed target/debug/zed; do
+        if [[ -x "$candidate" ]]; then
+            BINARY="$candidate"
+            break
+        fi
+    done
+fi
+if [[ -z "$BINARY" || ! -x "$BINARY" ]]; then
+    echo "error: no zed binary found (looked at target/release/zed and target/debug/zed)." >&2
+    echo "hint: run 'script/build-zed --release' or pass --binary PATH." >&2
+    exit 1
+fi
+BINARY=$(cd "$(dirname "$BINARY")" && pwd)/$(basename "$BINARY")
+
+for source in "$DESKTOP_SRC" "$METAINFO_SRC" "$ICON_SRC"; do
+    if [[ ! -f "$source" ]]; then
+        echo "error: $source is missing." >&2
+        exit 1
+    fi
+done
+
+echo "installing $BINARY"
+run install -d "$BIN_DIR" "$DATA_HOME/applications" \
+    "$DATA_HOME/icons/hicolor/512x512/apps" "$DATA_HOME/metainfo"
+
+if [[ "$LINK" == 1 ]]; then
+    # A symlink keeps the build directory as the source of truth: rebuilding
+    # updates the installed application without re-running this script.
+    run ln -sfn "$BINARY" "$BIN_PATH"
+else
+    run install -Dm755 "$BINARY" "$BIN_PATH"
+fi
+
+# Reuse the Flatpak desktop file so Name / Categories / MimeType stay in sync,
+# but point Exec and TryExec at the absolute path: a launcher does not inherit
+# the shell's PATH.
+if [[ "$DRY_RUN" == 1 ]]; then
+    echo "+ sed -e 's|^TryExec=.*|TryExec=$BIN_PATH|' -e 's|^Exec=.*|Exec=$BIN_PATH %U|' $DESKTOP_SRC > $DESKTOP_DST"
+else
+    sed -e "s|^TryExec=.*|TryExec=$BIN_PATH|" \
+        -e "s|^Exec=.*|Exec=$BIN_PATH %U|" \
+        "$DESKTOP_SRC" > "$DESKTOP_DST"
+fi
+
+run install -Dm644 "$ICON_SRC" "$ICON_DST"
+run install -Dm644 "$METAINFO_SRC" "$METAINFO_DST"
+
+if command -v update-desktop-database >/dev/null 2>&1; then
+    run update-desktop-database "$DATA_HOME/applications" || true
+fi
+
+cat <<EOF
+
+Installed '$NAME' (${BINARY#"$(pwd)/"}).
+  binary:  $BIN_PATH
+  desktop: $DESKTOP_DST
+
+Start it with:
+  $NAME
+or from the desktop's application grid ("Zed File Manager").
+
+Notes:
+- This runs natively: the terminal, the agent and \`script/build-zed\` see the
+  real host environment (no bwrap sandbox), which is what the Flatpak could not
+  give you.
+- It uses the native data directories (\`~/.local/share/zed\`, \`~/.config/zed\`),
+  not the Flatpak ones under \`~/.var/app/$APP_ID\`.
+- If the Flatpak is still installed, this desktop entry shadows the Flatpak one
+  (same app id). Remove the Flatpak with:
+      flatpak uninstall --user $APP_ID
+EOF
