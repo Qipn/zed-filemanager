@@ -82,6 +82,25 @@ pub(crate) struct ConflictDecision {
     pub(crate) target: Option<PathBuf>,
 }
 
+/// A transfer in flight, shown as a progress row under the header bar.
+///
+/// The values are updated once per transferred item: a directory copy reports
+/// progress per top-level entry (Nautilus counts each file inside a directory,
+/// which would need its own reporting walk; per entry keeps the common paste
+/// responsive and cancellable).
+pub(crate) struct TransferProgress {
+    /// How many entries the transfer covers.
+    pub(crate) total: usize,
+    /// How many have been processed.
+    pub(crate) done: usize,
+    /// The entry being processed, for the status text.
+    pub(crate) current: SharedString,
+    /// `true` for a copy, `false` for a move.
+    pub(crate) copy: bool,
+    /// Set by the Cancel button; the loop stops after the current entry.
+    pub(crate) cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
 /// A context menu deployed at the mouse position.
 pub(crate) struct DeployedContextMenu {
     pub(crate) menu: Entity<ui::ContextMenu>,
@@ -145,6 +164,8 @@ pub struct FileManagerPanel {
     pub(crate) drag_target: Option<PathBuf>,
     /// A transfer waiting for conflict resolution.
     pub(crate) pending_transfer: Option<PendingTransfer>,
+    /// The transfer currently running, for the progress row.
+    pub(crate) transfer_progress: Option<TransferProgress>,
     /// The name offered by the conflict prompt; editable, so the user can rename
     /// the incoming entry instead of replacing or skipping it.
     pub(crate) conflict_field: Entity<SearchField>,
@@ -266,6 +287,7 @@ impl FileManagerPanel {
             path_editing: false,
             drag_target: None,
             pending_transfer: None,
+            transfer_progress: None,
             conflict_field: cx.new(|cx| SearchField::new("file-manager-conflict-input", cx)),
             conflict_apply_to_all: false,
             view_mode: state.view_mode,

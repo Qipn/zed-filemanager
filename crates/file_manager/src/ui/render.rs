@@ -20,11 +20,13 @@ mod conflict_banner;
 mod header;
 mod location;
 mod status_bar;
+mod transfer_progress;
 
 use body::render_body;
 use conflict_banner::render_conflict_banner;
 use header::render_header_bar;
 use status_bar::render_status_bar;
+use transfer_progress::render_transfer_progress;
 
 use gpui::{Context, Focusable, IntoElement, KeyDownEvent, MouseButton, Window, canvas};
 use theme::ActiveTheme;
@@ -168,6 +170,7 @@ pub(super) fn render(
         }))
         .child(render_header_bar(this, window, cx))
         .children(render_conflict_banner(this, cx))
+        .children(render_transfer_progress(this, cx))
         .child(render_body(this, window, cx))
         .child(render_status_bar(this, cx))
         .children(this.render_context_menu())

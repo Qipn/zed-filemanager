@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use gpui::{Context, Focusable, Window};
+use gpui::{Context, Focusable, SharedString, Window};
 use util::ResultExt;
 
 use super::{ConflictDecision, DraggedPaths, FileManagerPanel, PendingTransfer};
@@ -271,12 +271,41 @@ impl FileManagerPanel {
         cx: &mut Context<Self>,
     ) {
         let fs = self.fs.clone();
+        // The progress row polls this flag; setting it makes the loop stop after
+        // the entry it is working on, so a cancelled transfer leaves whole
+        // entries behind (which the undo history records as usual).
+        let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.transfer_progress = Some(super::TransferProgress {
+            total: sources.len(),
+            done: 0,
+            current: SharedString::default(),
+            copy,
+            cancelled: cancelled.clone(),
+        });
+        cx.notify();
+
         self._operation_task = Some(cx.spawn_in(window, async move |this, cx| {
             let mut changes: Vec<Change> = Vec::new();
             let mut written: Vec<PathBuf> = Vec::new();
             let mut error = None;
 
             for (index, (source, target)) in sources.iter().zip(targets.iter()).enumerate() {
+                if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+                let name: SharedString = source
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+                    .unwrap_or_default()
+                    .into();
+                this.update(cx, |this, cx| {
+                    if let Some(progress) = this.transfer_progress.as_mut() {
+                        progress.current = name;
+                    }
+                    cx.notify();
+                })
+                .ok();
+
                 let policy = policies
                     .get(index)
                     .copied()
@@ -300,9 +329,18 @@ impl FileManagerPanel {
                         break;
                     }
                 }
+
+                this.update(cx, |this, cx| {
+                    if let Some(progress) = this.transfer_progress.as_mut() {
+                        progress.done = index + 1;
+                    }
+                    cx.notify();
+                })
+                .ok();
             }
 
             this.update_in(cx, |this, window, cx| {
+                this.transfer_progress = None;
                 this.error = error.map(Into::into);
                 if this.error.is_none() {
                     this.undo_manager.record(changes);
@@ -318,5 +356,15 @@ impl FileManagerPanel {
             })
             .log_err();
         }));
+    }
+
+    /// Stops the running transfer after the entry it is working on.
+    pub(crate) fn cancel_transfer(&mut self, cx: &mut Context<Self>) {
+        if let Some(progress) = self.transfer_progress.as_ref() {
+            progress
+                .cancelled
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            cx.notify();
+        }
     }
 }
