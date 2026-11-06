@@ -1,6 +1,9 @@
 //! The icon grid view: one tile per entry.
 
-use gpui::{ClickEvent, Context, ExternalPaths, IntoElement, Window, div, px, uniform_list};
+use gpui::{
+    ClickEvent, Context, ExternalPaths, IntoElement, MouseButton, MouseDownEvent, Window, div, px,
+    uniform_list,
+};
 use theme::ActiveTheme;
 use ui::{Color, Icon, IconName, IconSize, Label, LabelSize, prelude::*, rems_from_px};
 
@@ -51,6 +54,7 @@ pub(super) fn render_tile(
         IconName::File
     };
     let clicked_entry = entry.clone();
+    let right_click_path = entry.path.clone();
     let drag_path = entry.path.clone();
     let drag_name = entry.name.clone();
     // The tile grows with the icon, like OpenXplorer's grid view.
@@ -96,16 +100,26 @@ pub(super) fn render_tile(
                         }),
                 ),
         )
-        .child(
-            Label::new(entry.name.clone())
-                .size(LabelSize::Small)
-                .line_clamp(2)
-                .text_center()
-                .when(selected, |label| label.color(Color::Custom(palette.text))),
-        )
+        .child({
+            // The inline rename editor replaces the tile name while renaming.
+            let is_renaming = this
+                .rename_state
+                .as_ref()
+                .is_some_and(|state| state.source == entry.path);
+            if is_renaming {
+                this.rename_field.clone().into_any_element()
+            } else {
+                Label::new(entry.name.clone())
+                    .size(LabelSize::Small)
+                    .line_clamp(2)
+                    .text_center()
+                    .when(selected, |label| label.color(Color::Custom(palette.text)))
+                    .into_any_element()
+            }
+        })
         .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
             if this.rename_state.is_some() {
-                this.cancel_rename(cx);
+                this.cancel_rename(window, cx);
             }
             let modifiers = match event {
                 ClickEvent::Mouse(click) => click.up.modifiers,
@@ -123,6 +137,23 @@ pub(super) fn render_tile(
             }
             cx.notify();
         }))
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                // Keep a multi-selection that already contains this tile, like
+                // the details view does.
+                if !this.is_selected(&right_click_path) {
+                    this.selected.clear();
+                    this.selected.push(right_click_path.clone());
+                    this.selection_anchor = Some(index);
+                }
+                if this.rename_state.is_some() {
+                    this.cancel_rename(window, cx);
+                }
+                this.deploy_item_menu(event.position, window, cx);
+                cx.stop_propagation();
+            }),
+        )
         .on_drag(DraggedPaths(vec![drag_path.clone()]), {
             let label = drag_name;
             move |_, _, _window, cx| {

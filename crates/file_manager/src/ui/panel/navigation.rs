@@ -111,7 +111,7 @@ impl FileManagerPanel {
         // While searching, "up" leaves the search and returns to the folder the
         // search started from, like Windows Explorer returns to the scope.
         if self.search_query.is_some() {
-            self.toggle_search(cx);
+            self.toggle_search(window, cx);
             return;
         }
         let Some(parent) = self
@@ -182,33 +182,35 @@ impl FileManagerPanel {
     /// Enters path-bar editing with the current directory prefilled.
     ///
     /// The location slot is shared with the search (like GNOME Files), so
-    /// opening the editable path leaves the search mode.
-    pub(crate) fn begin_path_edit(&mut self, cx: &mut Context<Self>) {
+    /// opening the editable path leaves the search mode. The text lives in the
+    /// path entry entity (a real text field: caret, selection, input methods),
+    /// and the whole path starts selected — pressing Ctrl+L and typing replaces
+    /// it, like GNOME Files and Explorer.
+    pub(crate) fn begin_path_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.search_query = None;
-        self.path_edit = Some(self.current_dir_label().to_string());
+        let path = self.current_dir_label().to_string();
+        self.path_edit = Some(path.clone());
+        self.path_field.update(cx, |field, cx| {
+            let end = path.len();
+            field.set_text_with_selection(&path, 0..end, window, cx);
+        });
+        self.focus_path_field(window, cx);
         cx.notify();
     }
 
-    pub(crate) fn cancel_path_edit(&mut self, cx: &mut Context<Self>) {
-        self.path_edit = None;
-        cx.notify();
-    }
-
-    pub(crate) fn path_edit_input(&mut self, key: &str, modifiers: gpui::Modifiers) {
-        let Some(buffer) = self.path_edit.as_mut() else {
+    /// Focuses the editable location entry, if it is open.
+    pub(crate) fn focus_path_field(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.path_edit.is_none() {
             return;
-        };
-        let _ = modifiers;
-        match key {
-            "space" => buffer.push(' '),
-            key if key.len() == 1 => buffer.push_str(key),
-            _ => {}
         }
+        let focus = self.path_field.read(cx).focus_handle(cx);
+        window.focus(&focus, cx);
     }
 
-    pub(crate) fn path_edit_backspace(&mut self) {
-        if let Some(buffer) = self.path_edit.as_mut() {
-            buffer.pop();
+    pub(crate) fn cancel_path_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.path_edit.take().is_some() {
+            window.focus(&self.focus_handle, cx);
+            cx.notify();
         }
     }
 
@@ -218,11 +220,14 @@ impl FileManagerPanel {
     /// free lexical joins. A directory is navigated into; a file selects it in
     /// its parent; a missing path keeps the editor open with the error shown.
     pub(crate) fn confirm_path_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(raw) = self.path_edit.take() else {
+        if self.path_edit.is_none() {
             return;
-        };
+        }
+        let raw = self.path_field.read(cx).content().to_string();
         let trimmed = raw.trim();
         if trimmed.is_empty() {
+            // An empty location is meaningless; stay in the editor.
+            self.focus_path_field(window, cx);
             cx.notify();
             return;
         }
@@ -237,7 +242,7 @@ impl FileManagerPanel {
                 Some(directory) => expanded = directory.join(expanded),
                 None => {
                     self.error = Some("No folder open; enter an absolute path".into());
-                    self.path_edit = Some(raw);
+                    self.focus_path_field(window, cx);
                     cx.notify();
                     return;
                 }
@@ -252,22 +257,27 @@ impl FileManagerPanel {
             this.update_in(cx, |this, window, cx| {
                 if is_dir {
                     this.error = None;
+                    this.path_edit = None;
                     this.selected.clear();
                     this.selection_anchor = None;
                     this.set_current_dir(target, None, window, cx);
+                    window.focus(&this.focus_handle, cx);
                 } else if is_file {
                     let parent = target
                         .parent()
                         .map(Path::to_path_buf)
                         .unwrap_or_else(|| target.clone());
                     this.error = None;
+                    this.path_edit = None;
                     this.selected.clear();
                     this.selected.push(target.clone());
                     this.set_current_dir(parent, None, window, cx);
+                    window.focus(&this.focus_handle, cx);
                 } else {
+                    // Keep the editor open so the path can be fixed.
                     this.error =
                         Some(format!("No such directory or file: {}", target.display()).into());
-                    this.path_edit = Some(raw);
+                    this.focus_path_field(window, cx);
                 }
                 cx.notify();
             })

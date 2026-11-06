@@ -1,28 +1,28 @@
-//! Rendering for `FileManagerPanel`, laid out like OpenXplorer.
+//! Rendering for `FileManagerPanel`, laid out like GNOME Files.
 //!
-//! The band order follows the upstream application
-//! (`native/docs/ui-spec.md` §1.1):
+//! The band order follows GNOME Files' window and toolbar
+//! (`nautilus-window.blp`, `nautilus-toolbar.blp`):
 //!
 //! ```text
-//! navigation row (back, forward, up, refresh, address bar)
-//! command bar   (New | Cut Copy Paste Rename Delete | Sort View More)
+//! header bar    (sidebar toggle, back/forward, location slot, search,
+//!                view controls, new folder)
 //! body          (sidebar: places + folder tree | folder view)
-//! status bar    (count, selection, … , view toggles)
+//! status bar    (count, selection, …, view toggles)
 //! ```
 //!
-//! The view layer lives in `views.rs` (details and grid views) and
-//! `sidebar.rs` (places and folder tree).
+//! There is no separate command bar: GNOME keeps the file commands in the
+//! context menu and on the keyboard, and the panel does the same. The view
+//! layer lives in `views.rs` (details and grid views) and `sidebar.rs` (places
+//! and folder tree).
 
 mod body;
-mod command_bar;
 mod conflict_banner;
 mod navigation;
 mod status_bar;
 
 use body::render_body;
-use command_bar::render_command_bar;
 use conflict_banner::render_conflict_banner;
-use navigation::render_navigation_row;
+use navigation::render_header_bar;
 use status_bar::render_status_bar;
 
 use gpui::{Context, IntoElement, KeyDownEvent, MouseButton, Window, canvas};
@@ -32,7 +32,8 @@ use ui::prelude::*;
 use crate::ui::panel::FileManagerPanel;
 use crate::{
     Copy, Cut, Delete, EditLocation, NewFile, NewFolder, Open, OpenContextMenu, Paste, Redo,
-    Refresh, Rename, ToggleBookmark, ToggleSearch, ToggleSidebar, ToggleViewMode, Trash, Undo,
+    Refresh, Rename, SelectAll, ToggleBookmark, ToggleSearch, ToggleSidebar, ToggleViewMode, Trash,
+    Undo,
 };
 
 /// Renders the whole panel.
@@ -109,14 +110,17 @@ pub(super) fn render(
         .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| {
             this.toggle_sidebar(cx);
         }))
-        .on_action(cx.listener(|this, _: &ToggleSearch, _, cx| {
-            this.toggle_search(cx);
+        .on_action(cx.listener(|this, _: &ToggleSearch, window, cx| {
+            this.toggle_search(window, cx);
         }))
-        .on_action(cx.listener(|this, _: &EditLocation, _, cx| {
-            this.begin_path_edit(cx);
+        .on_action(cx.listener(|this, _: &EditLocation, window, cx| {
+            this.begin_path_edit(window, cx);
         }))
         .on_action(cx.listener(|this, _: &ToggleBookmark, _, cx| {
             this.toggle_bookmark(cx);
+        }))
+        .on_action(cx.listener(|this, _: &SelectAll, _, cx| {
+            this.select_all(cx);
         }))
         .on_action(cx.listener(|this, _: &ToggleViewMode, _, cx| {
             this.set_view_mode(
@@ -127,8 +131,7 @@ pub(super) fn render(
                 cx,
             );
         }))
-        .child(render_navigation_row(this, window, cx))
-        .child(render_command_bar(this, window, cx))
+        .child(render_header_bar(this, window, cx))
         .children(render_conflict_banner(this, cx))
         .child(render_body(this, window, cx))
         .child(render_status_bar(this, cx))

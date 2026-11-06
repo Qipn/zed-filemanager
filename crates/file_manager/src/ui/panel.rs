@@ -39,6 +39,7 @@ use crate::model::undo::UndoManager;
 use crate::ui::ox_theme::metrics;
 use crate::ui::places::PlaceEntry;
 use crate::ui::render as render_panel;
+use crate::ui::search_field::{SearchField, SearchFieldEvent};
 use crate::ui::views::ViewMode;
 
 /// A transfer waiting for the user to decide how name conflicts are resolved.
@@ -96,7 +97,8 @@ pub struct FileManagerPanel {
     pub(crate) undo_manager: UndoManager,
     pub(crate) show_hidden: bool,
     pub(crate) sort_mode: SortMode,
-    /// Active path-bar edit: the typed buffer. `Some` means editing.
+    /// Active path-bar edit: the mode flag and a mirror of the text the entry
+    /// holds. `Some` means editing.
     pub(crate) path_edit: Option<String>,
     /// The entry currently being hovered by a drag, for drop highlight.
     pub(crate) drag_target: Option<PathBuf>,
@@ -110,6 +112,16 @@ pub struct FileManagerPanel {
     pub(crate) details_pane_visible: bool,
     /// The search query of the search box; `None` when the box is closed.
     pub(crate) search_query: Option<String>,
+    /// The text entry of the search mode. It owns the text, the caret and the
+    /// selection; the panel keeps `search_query` in sync so the rest of the
+    /// panel can keep working with a plain string.
+    pub(crate) search_field: Entity<SearchField>,
+    /// The inline rename editor. It is the same kind of entity as the search
+    /// entry, so renaming gets a caret, selection and input-method support.
+    pub(crate) rename_field: Entity<SearchField>,
+    /// The editable location entry. Same entity again: the path bar gets a real
+    /// caret, selection and input-method support.
+    pub(crate) path_field: Entity<SearchField>,
     /// The hits of the last completed search, if any.
     pub(crate) search_results: Option<crate::model::search::SearchResults>,
     /// Whether a search is currently running.
@@ -189,6 +201,9 @@ impl FileManagerPanel {
             sidebar_visible: true,
             details_pane_visible: false,
             search_query: None,
+            search_field: cx.new(|cx| SearchField::new("file-manager-search-input", cx)),
+            rename_field: cx.new(|cx| SearchField::new("file-manager-rename-input", cx)),
+            path_field: cx.new(|cx| SearchField::new("file-manager-path-input", cx)),
             search_results: None,
             search_running: false,
             search_generation: 0,
@@ -222,6 +237,66 @@ impl FileManagerPanel {
                 panel.history.push(dir);
                 panel.load_directory(window, cx);
             }
+            // The search entry owns its text; the panel mirrors it and restarts
+            // the search on every change, like GNOME Files' `changed` handler
+            // (`nautilus-query-editor.blp`).
+            let search_field = panel.search_field.clone();
+            cx.subscribe_in(
+                &search_field,
+                window,
+                |this, field, event: &SearchFieldEvent, window, cx| match event {
+                    SearchFieldEvent::Change => {
+                        let text = field.read(cx).content().to_string();
+                        this.search_query = Some(text);
+                        this.start_search(window, cx);
+                    }
+                    // GNOME's query editor emits `activated` on Enter and the
+                    // window slot opens the selection
+                    // (`nautilus-window-slot.c::query_editor_activated_callback`).
+                    // With nothing selected the focus goes back to the list so
+                    // Enter/arrow keys work from there.
+                    SearchFieldEvent::Submit => {
+                        if this.selected_entry().is_some() {
+                            this.open_selected(window, cx);
+                        } else {
+                            window.focus(&this.focus_handle, cx);
+                        }
+                    }
+                    SearchFieldEvent::Dismiss => {
+                        this.toggle_search(window, cx);
+                    }
+                },
+            )
+            .detach();
+
+            // The inline rename editor. Enter confirms, Escape cancels; the
+            // validation lives in `confirm_rename`.
+            let rename_field = panel.rename_field.clone();
+            cx.subscribe_in(
+                &rename_field,
+                window,
+                |this, _field, event: &SearchFieldEvent, window, cx| match event {
+                    SearchFieldEvent::Submit => this.confirm_rename(window, cx),
+                    SearchFieldEvent::Dismiss => this.cancel_rename(window, cx),
+                    SearchFieldEvent::Change => {}
+                },
+            )
+            .detach();
+
+            // The editable location entry, with the same event shape.
+            let path_field = panel.path_field.clone();
+            cx.subscribe_in(
+                &path_field,
+                window,
+                |this, field, event: &SearchFieldEvent, window, cx| match event {
+                    SearchFieldEvent::Change => {
+                        this.path_edit = Some(field.read(cx).content().to_string());
+                    }
+                    SearchFieldEvent::Submit => this.confirm_path_edit(window, cx),
+                    SearchFieldEvent::Dismiss => this.cancel_path_edit(window, cx),
+                },
+            )
+            .detach();
             // The sidebar needs the places list and the folder tree.
             panel.refresh_places(cx);
             panel.refresh_tree(window, cx);
@@ -289,7 +364,7 @@ impl FileManagerPanel {
 
         self._loading_task = Some(cx.spawn_in(window, async move |this, cx| {
             let result = read_entries(fs, directory, show_hidden, sort_mode).await;
-            this.update(cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
                 if this.loading_generation != generation {
                     return;
                 }
@@ -303,6 +378,10 @@ impl FileManagerPanel {
                         this.error = Some(format!("{error}").into());
                     }
                 }
+                // A freshly created entry only exists as a row once the
+                // directory is loaded, so the inline rename editor takes the
+                // focus here rather than when the rename starts.
+                this.focus_rename_field(window, cx);
                 cx.notify();
             })
             .log_err();

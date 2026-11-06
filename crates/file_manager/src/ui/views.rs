@@ -16,7 +16,7 @@ pub(crate) use format::format_modified;
 use details::render_details_list;
 use grid::render_icon_grid;
 
-use gpui::{AnyElement, Context, IntoElement, Window, div, px};
+use gpui::{AnyElement, Context, IntoElement, MouseButton, MouseDownEvent, Window, div, px};
 use theme::ActiveTheme;
 use ui::{Color, Icon, IconName, IconSize, Label, LabelSize, prelude::*};
 
@@ -128,7 +128,37 @@ pub(crate) fn render_column_header(
 }
 
 /// Renders the folder view: the details list or the icon grid.
+///
+/// The whole view is wrapped in a container that answers a right click on the
+/// empty area with the background context menu. Rows and tiles stop the
+/// propagation of their own right clicks, so the two menus never both appear
+/// (GNOME Files does the same with a `GtkGestureClick` on the view and one per
+/// item in `nautilus-files-view.c`).
 pub(crate) fn render_view(
+    this: &mut FileManagerPanel,
+    window: &mut Window,
+    cx: &mut Context<FileManagerPanel>,
+) -> AnyElement {
+    let content = render_view_content(this, window, cx);
+
+    v_flex()
+        .id("file-manager-view")
+        .flex_1()
+        .w_full()
+        .min_h(px(0.))
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                this.deploy_background_menu(event.position, window, cx);
+                cx.stop_propagation();
+            }),
+        )
+        .child(content)
+        .into_any_element()
+}
+
+/// The view itself, without the background handler.
+fn render_view_content(
     this: &mut FileManagerPanel,
     window: &mut Window,
     cx: &mut Context<FileManagerPanel>,

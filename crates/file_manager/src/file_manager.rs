@@ -20,7 +20,7 @@
 //! - [`ui`]: the `gpui` layer.
 //!   - [`ui::panel`]: the `FileManagerPanel` entity and its `Panel` impl.
 //!   - [`ui::panel::bookmarks`]: pinning and unpinning sidebar folders.
-//!   - [`ui::render`]: the OpenXplorer layout.
+//!   - [`ui::render`]: the window layout (GNOME Files header bar, body, status bar).
 //!   - [`ui::views`]: the details view and the icon grid.
 //!   - [`ui::sidebar`]: the places list and the folder tree.
 //!   - [`ui::details_pane`]: the details pane on the right.
@@ -83,6 +83,8 @@ actions!(
         EditLocation,
         /// Pins the current folder in the sidebar, or unpins it.
         ToggleBookmark,
+        /// Selects every row of the folder view.
+        SelectAll,
     ]
 );
 

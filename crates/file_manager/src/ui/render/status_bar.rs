@@ -96,6 +96,14 @@ pub(super) fn render_status_bar(
                 .size(LabelSize::XSmall)
                 .color(Color::Custom(palette.muted)),
         )
+        // The active sort order. GNOME Files shows it in its view menu; a dock
+        // has the room for it in the status bar.
+        .child(
+            Label::new(format!("Sorted by {}", this.sort_mode.label()))
+                .single_line()
+                .size(LabelSize::XSmall)
+                .color(Color::Custom(palette.muted)),
+        )
         .child(div().flex_1())
         // The icon size stepper, only in the icon grid view.
         .when(this.view_mode == ViewMode::Grid, |this| {

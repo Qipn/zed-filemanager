@@ -1076,6 +1076,7 @@
       "ctrl-f": "file_manager::ToggleSearch",
       "ctrl-l": "file_manager::EditLocation",
       "ctrl-d": "file_manager::ToggleBookmark",
+      "ctrl-a": "file_manager::SelectAll",
     },
   },
   {

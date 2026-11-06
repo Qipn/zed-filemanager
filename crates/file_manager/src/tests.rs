@@ -1,11 +1,11 @@
 //! Render smoke tests for the file manager panel.
 //!
 //! They build a workspace with a temporary directory and draw the panel, so
-//! that the OpenXplorer layout (navigation row, command bar, sidebar with the
-//! places list and the folder tree, details view, details pane, status bar) is
-//! exercised without opening the editor.
+//! that the layout (header bar, sidebar with the places list and the folder
+//! tree, details view, details pane, status bar) is exercised without opening
+//! the editor.
 
-use gpui::{TestAppContext, WindowOptions};
+use gpui::{AppContext, TestAppContext, WindowOptions};
 use project::Project;
 use settings::SettingsStore;
 use workspace::Workspace;
@@ -38,10 +38,55 @@ async fn test_render_panel(cx: &mut TestAppContext) {
     });
 
     // The panel is the root view of a second window, so opening that window
-    // draws the whole OpenXplorer layout.
+    // draws the whole layout.
     cx.update(|_window, cx| {
         cx.open_window(WindowOptions::default(), |_window, _cx| panel.clone())
             .expect("failed to open the test window");
+    });
+}
+
+/// The search entry accepts typed characters once it is open.
+///
+/// Regression test for "clicking the search box does not let you type": the
+/// entry must get the focus when the search opens, and the keystrokes must end
+/// up in its text (not only in the platform's text-input path, which needs a
+/// registered input handler).
+#[gpui::test]
+async fn test_typing_in_the_search_field(cx: &mut TestAppContext) {
+    init_globals(cx);
+
+    let fs = fs::FakeFs::new(cx.background_executor.clone());
+    let project = Project::test(fs.clone(), ["/".as_ref()], cx).await;
+
+    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        FileManagerPanel::new(workspace, window, cx)
+    });
+
+    let window = cx.update(|_window, cx| {
+        cx.open_window(WindowOptions::default(), |_window, _cx| panel.clone())
+            .expect("failed to open the test window")
+    });
+    let window = window.into();
+
+    // Opening the search focuses the entry (GNOME swaps the toolbar to its
+    // search page and grabs the focus).
+    cx.update_window(window, |_, window, cx| {
+        panel.update(cx, |panel, cx| panel.toggle_search(window, cx));
+    })
+    .unwrap();
+
+    // The two-argument form dispatches into the given window (the panel's own),
+    // through the same `Window::dispatch_keystroke` the platform uses.
+    TestAppContext::simulate_keystrokes(&mut *cx, window, "a b");
+
+    panel.read_with(cx, |panel, cx| {
+        assert_eq!(
+            panel.search_field.read(cx).content(),
+            "ab",
+            "keystrokes reach the search entry"
+        );
+        assert_eq!(panel.search_query.as_deref(), Some("ab"));
     });
 }
 

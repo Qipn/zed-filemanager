@@ -10,6 +10,7 @@ pub(crate) mod ox_theme;
 pub(crate) mod panel;
 pub(crate) mod places;
 pub(crate) mod render;
+pub(crate) mod search_field;
 pub(crate) mod sidebar;
 pub(crate) mod views;
 

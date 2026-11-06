@@ -95,6 +95,25 @@ impl FileManagerPanel {
         }
     }
 
+    /// Selects every visible row, like GNOME Files' "Select All" in the
+    /// background context menu (`Ctrl+A`).
+    pub(crate) fn select_all(&mut self, cx: &mut Context<Self>) {
+        let rows = self.visible_rows();
+        self.selected = rows.iter().map(|(entry, _)| entry.path.clone()).collect();
+        self.selection_anchor = (!rows.is_empty()).then_some(0);
+        cx.notify();
+    }
+
+    /// Clears the selection, used when the background of the view is clicked.
+    pub(crate) fn clear_selection(&mut self, cx: &mut Context<Self>) {
+        if self.selected.is_empty() {
+            return;
+        }
+        self.selected.clear();
+        self.selection_anchor = None;
+        cx.notify();
+    }
+
     pub(crate) fn toggle_select(&mut self, index: usize, cx: &mut Context<Self>) {
         let rows = self.visible_rows();
         let Some((entry, _)) = rows.get(index) else {
@@ -175,95 +194,29 @@ impl FileManagerPanel {
         cx: &mut Context<Self>,
     ) {
         let modifiers = event.keystroke.modifiers;
-        // While the search box is open, all keystrokes feed the query.
+        // While the search entry is open it owns the keystrokes; the panel only
+        // keeps Escape so the mode can still be left when the focus sits on the
+        // list (after clicking a hit).
         if self.search_query.is_some() {
-            match event.keystroke.key.as_str() {
-                "escape" => {
-                    self.search_query = None;
-                    self.clear_search_results();
-                }
-                "enter" => {}
-                "backspace" => {
-                    self.search_backspace(window, cx);
-                }
-                key => {
-                    if !modifiers.control && !modifiers.alt && !modifiers.platform {
-                        // `key` is the name printed on the key ("space", "a", …);
-                        // `key_char` is what was actually typed. Prefer the
-                        // typed character so spaces and non-ASCII input work.
-                        let text = event
-                            .keystroke
-                            .key_char
-                            .as_deref()
-                            .filter(|text| !text.is_empty() && *text != "space")
-                            .or_else(|| (key == "space").then_some(" "))
-                            .unwrap_or(key);
-                        self.search_input(text, window, cx);
-                    }
-                }
+            if event.keystroke.key == "escape" {
+                self.toggle_search(window, cx);
+                cx.stop_propagation();
             }
-            cx.stop_propagation();
             return;
         }
-        // While path-bar editing is active, all keystrokes feed the buffer.
+        // While the location entry is open it owns the keys (it is focused and
+        // stops propagation); the panel only keeps Escape, so the mode can still
+        // be left when the focus sits on the list.
         if self.path_edit.is_some() {
-            match event.keystroke.key.as_str() {
-                "enter" => {
-                    self.confirm_path_edit(window, cx);
-                }
-                "escape" => {
-                    self.cancel_path_edit(cx);
-                }
-                "backspace" => {
-                    self.path_edit_backspace();
-                }
-                key => {
-                    if !modifiers.control && !modifiers.alt && !modifiers.platform {
-                        self.path_edit_input(key, modifiers);
-                    }
-                }
+            if event.keystroke.key == "escape" {
+                self.cancel_path_edit(window, cx);
+                cx.stop_propagation();
             }
-            cx.stop_propagation();
             return;
         }
-        // While an inline rename is active, all keystrokes feed the buffer.
+        // While an inline rename is active the rename field owns the keys (it
+        // is focused, and stops propagation), so nothing is handled here.
         if self.rename_state.is_some() {
-            match event.keystroke.key.as_str() {
-                "enter" => {
-                    self.confirm_rename(window, cx);
-                }
-                "escape" => {
-                    self.cancel_rename(cx);
-                }
-                "backspace" => {
-                    if let Some(state) = self.rename_state.as_mut() {
-                        state.buffer.pop();
-                    }
-                }
-                key => {
-                    if !modifiers.control && !modifiers.alt && !modifiers.platform {
-                        let character = if key == "space" {
-                            Some(' ')
-                        } else if key.len() == 1 {
-                            let mut chars = key.chars();
-                            let character = chars.next();
-                            if modifiers.shift {
-                                character.map(|c| c.to_ascii_uppercase())
-                            } else {
-                                character
-                            }
-                        } else {
-                            None
-                        };
-                        if let Some(character) = character {
-                            if let Some(state) = self.rename_state.as_mut() {
-                                state.buffer.push(character);
-                            }
-                        }
-                    }
-                }
-            }
-            cx.stop_propagation();
             return;
         }
 

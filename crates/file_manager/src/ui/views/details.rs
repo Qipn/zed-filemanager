@@ -178,12 +178,24 @@ pub(super) fn render_details_row(
                             Color::Muted
                         }),
                 )
-                .child(
-                    Label::new(entry.name.clone())
-                        .single_line()
-                        .truncate()
-                        .when(is_clipboard_source, |label| label.color(Color::Muted)),
-                ),
+                .child({
+                    // While this entry is being renamed the inline editor takes
+                    // the place of its name (`project_panel` renders its
+                    // filename editor the same way).
+                    let is_renaming = this
+                        .rename_state
+                        .as_ref()
+                        .is_some_and(|state| state.source == entry.path);
+                    if is_renaming {
+                        this.rename_field.clone().into_any_element()
+                    } else {
+                        Label::new(entry.name.clone())
+                            .single_line()
+                            .truncate()
+                            .when(is_clipboard_source, |label| label.color(Color::Muted))
+                            .into_any_element()
+                    }
+                }),
         )
         // Date modified column.
         .when(this.is_modified_column_shown(), |row| {
@@ -230,7 +242,7 @@ pub(super) fn render_details_row(
         .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
             // Clicking elsewhere cancels an active rename.
             if this.rename_state.is_some() {
-                this.cancel_rename(cx);
+                this.cancel_rename(window, cx);
             }
             let modifiers = match event {
                 ClickEvent::Mouse(click) => click.up.modifiers,
@@ -251,12 +263,21 @@ pub(super) fn render_details_row(
         .on_mouse_down(
             MouseButton::Right,
             cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                this.selected.clear();
-                this.selected.push(right_click_path.clone());
-                if this.rename_state.is_some() {
-                    this.cancel_rename(cx);
+                // GNOME keeps a multi-selection when the clicked row is already
+                // part of it; right-clicking outside the selection selects just
+                // that row.
+                if !this.is_selected(&right_click_path) {
+                    this.selected.clear();
+                    this.selected.push(right_click_path.clone());
+                    this.selection_anchor = Some(index);
                 }
-                this.deploy_context_menu(event.position, window, cx);
+                if this.rename_state.is_some() {
+                    this.cancel_rename(window, cx);
+                }
+                this.deploy_item_menu(event.position, window, cx);
+                // Keep the view's background handler from clearing the item
+                // selection and re-opening its own menu.
+                cx.stop_propagation();
             }),
         )
         // Internal drag target (directories only).

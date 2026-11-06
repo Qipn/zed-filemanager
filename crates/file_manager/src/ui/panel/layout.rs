@@ -127,4 +127,18 @@ impl FileManagerPanel {
     pub(crate) fn is_type_column_shown(&self) -> bool {
         self.breakpoint_width() >= 760.
     }
+
+    /// Whether the header bar's view controls fit.
+    ///
+    /// GNOME Files exposes `show-view-controls` on its toolbar (which the
+    /// window hides when it gets narrow); inside a Zed dock the panel is much
+    /// narrower than a GNOME window, so the controls drop out earlier.
+    pub(crate) fn is_header_view_controls_shown(&self) -> bool {
+        self.breakpoint_width() >= 340.
+    }
+
+    /// Whether the header bar's new-folder control fits.
+    pub(crate) fn is_header_new_controls_shown(&self) -> bool {
+        self.breakpoint_width() >= 430.
+    }
 }

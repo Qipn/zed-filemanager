@@ -21,10 +21,14 @@ use theme::Theme;
 /// specification.
 #[allow(dead_code)]
 pub(crate) mod metrics {
-    /// Height of the navigation row (back/forward/up/refresh + address bar).
-    pub(crate) const NAV_ROW: f32 = 62.;
-    /// Height of the command bar (New / Cut / Copy / … / Sort / View / More).
-    pub(crate) const COMMAND_BAR: f32 = 55.;
+    /// Height of the header bar (sidebar toggle, history, location slot,
+    /// search, view and new controls).
+    ///
+    /// GNOME Files' `Adw.HeaderBar` is 47 px tall (34 px controls + 6 px
+    /// padding); the toolbar of this panel follows that single-row layout
+    /// (`nautilus-toolbar.blp`) instead of OpenXplorer's 62 px navigation row
+    /// plus 55 px command bar.
+    pub(crate) const HEADER_BAR: f32 = 47.;
     /// Height of the column header row of the details view.
     pub(crate) const COLUMN_HEADER: f32 = 38.;
     /// Height of the status bar.
@@ -81,7 +85,7 @@ pub(crate) mod metrics {
 /// `selected` keeps OpenXplorer's soft blue, `muted` is the secondary text
 /// colour.
 pub(crate) struct OxPalette {
-    /// Chrome surfaces: command bar, navigation row.
+    /// Chrome surfaces: the header bar.
     pub(crate) chrome: Hsla,
     /// Content surface: the folder view.
     pub(crate) bg: Hsla,

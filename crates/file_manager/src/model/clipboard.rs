@@ -23,11 +23,15 @@ impl Clipboard {
     }
 }
 
-/// Active inline rename: the entry being renamed and the typed buffer.
+/// Active inline rename: the entry being renamed.
+///
+/// The typed text lives in the panel's [`crate::ui::search_field::SearchField`]
+/// entity, so the inline editor gets a real caret, selection and input-method
+/// support (the rename row renders that entity in place of the name).
 #[derive(Debug)]
 pub(crate) struct RenameState {
+    /// The entry that is being renamed.
     pub(crate) source: PathBuf,
-    pub(crate) buffer: String,
 }
 
 /// Copies a file, or a directory tree via `fs::copy_recursive`.

@@ -1,4 +1,4 @@
-//! The context menu and the command bar menus (`New`, `Sort`, `View`, `More`).
+//! The context menu and the header bar's menus (`View`, `New`).
 //!
 //! These builders only construct a `ui::ContextMenu` and hand it to the panel's
 //! `context_menu` slot; the panel owns the deployed menu and renders it.
@@ -12,13 +12,36 @@ use ui::prelude::*;
 use super::{DeployedContextMenu, FileManagerPanel};
 use crate::ui::views::ViewMode;
 use crate::{
-    Copy, Cut, Delete, NewFile, NewFolder, Open, Paste, Redo, Refresh, Rename, ToggleBookmark,
-    Trash, Undo,
+    Copy, Cut, Delete, NewFile, NewFolder, Open, Paste, Redo, Refresh, Rename, SelectAll,
+    ToggleBookmark, Trash, Undo,
 };
 
 impl FileManagerPanel {
-    /// Deploys the context menu at the given window position (right-click).
+    /// Deploys the context menu for the current state.
+    ///
+    /// Used by the keyboard (`OpenContextMenu`): with a selection it opens the
+    /// item menu, otherwise the background menu — the same dispatch GNOME Files
+    /// does when the menu key is pressed.
     pub(crate) fn deploy_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.selected.is_empty() {
+            self.deploy_background_menu(position, window, cx);
+        } else {
+            self.deploy_item_menu(position, window, cx);
+        }
+    }
+
+    /// The menu of the selected entries.
+    ///
+    /// Mirrors GNOME Files' selection menu
+    /// (`nautilus-files-view.c::files_view_pop_up_selection_context_menu`):
+    /// actions that operate on the selection, and nothing about the folder
+    /// itself (no New Folder, Paste, Select All or Refresh).
+    pub(crate) fn deploy_item_menu(
         &mut self,
         position: Point<Pixels>,
         window: &mut Window,
@@ -26,47 +49,85 @@ impl FileManagerPanel {
     ) {
         let has_selection = !self.selected.is_empty();
         let has_clipboard = self.clipboard.is_some();
+        let bookmark_label = self.bookmark_toggle_label();
+        let focus_handle = self.focus_handle.clone();
+
+        self.deploy_menu(
+            position,
+            move |menu, _, _| {
+                menu.context(focus_handle.clone())
+                    .action_disabled_when(!has_selection, "Open", Box::new(Open))
+                    .separator()
+                    .action_disabled_when(!has_selection, "Rename", Box::new(Rename))
+                    .action_disabled_when(!has_selection, "Copy", Box::new(Copy))
+                    .action_disabled_when(!has_selection, "Cut", Box::new(Cut))
+                    .action_disabled_when(!has_clipboard, "Paste", Box::new(Paste))
+                    .separator()
+                    .action_disabled_when(!has_selection, "Move to Trash", Box::new(Trash))
+                    .action_disabled_when(!has_selection, "Delete Permanently", Box::new(Delete))
+                    .separator()
+                    .action(bookmark_label, Box::new(ToggleBookmark))
+            },
+            window,
+            cx,
+        );
+    }
+
+    /// The menu of the view's empty space.
+    ///
+    /// GNOME Files clears the selection and then shows the folder's own menu
+    /// (`nautilus-files-view.c::files_view_clicked_cb` →
+    /// `nautilus_files_view_pop_up_background_context_menu`): only actions that
+    /// act on the folder, never on an entry.
+    pub(crate) fn deploy_background_menu(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.clear_selection(cx);
+        if self.rename_state.is_some() {
+            self.cancel_rename(window, cx);
+        }
+
+        let has_clipboard = self.clipboard.is_some();
+        let has_entries = !self.entries.is_empty()
+            || self
+                .search_results
+                .as_ref()
+                .is_some_and(|results| !results.entries.is_empty());
         let can_undo = self.undo_manager.can_undo();
         let can_redo = self.undo_manager.can_redo();
-        // GNOME Files offers the bookmark toggle for the current location in
-        // the same menu that holds the file actions.
-        let bookmark_label = if self.current_dir_is_bookmarked() {
+        let bookmark_label = self.bookmark_toggle_label();
+        let focus_handle = self.focus_handle.clone();
+
+        self.deploy_menu(
+            position,
+            move |menu, _, _| {
+                menu.context(focus_handle.clone())
+                    .action("New Folder", Box::new(NewFolder))
+                    .action("New File", Box::new(NewFile))
+                    .action_disabled_when(!has_clipboard, "Paste", Box::new(Paste))
+                    .action_disabled_when(!has_entries, "Select All", Box::new(SelectAll))
+                    .action("Refresh", Box::new(Refresh))
+                    .separator()
+                    .action_disabled_when(!can_undo, "Undo", Box::new(Undo))
+                    .action_disabled_when(!can_redo, "Redo", Box::new(Redo))
+                    .separator()
+                    .action(bookmark_label, Box::new(ToggleBookmark))
+            },
+            window,
+            cx,
+        );
+    }
+
+    /// The label of the bookmark entry: adding or removing the current folder.
+    fn bookmark_toggle_label(&self) -> &'static str {
+        if self.current_dir_is_bookmarked() {
             "Remove from Bookmarks"
         } else {
             "Add to Bookmarks"
-        };
-        let menu = ui::ContextMenu::build(window, cx, |menu, _, _| {
-            menu.context(self.focus_handle.clone())
-                .action_disabled_when(!has_selection, "Open", Box::new(Open))
-                .separator()
-                .action("New Folder", Box::new(NewFolder))
-                .action("New File", Box::new(NewFile))
-                .action("Refresh", Box::new(Refresh))
-                .separator()
-                .action_disabled_when(!has_selection, "Rename", Box::new(Rename))
-                .action_disabled_when(!has_selection, "Copy", Box::new(Copy))
-                .action_disabled_when(!has_selection, "Cut", Box::new(Cut))
-                .action_disabled_when(!has_clipboard, "Paste", Box::new(Paste))
-                .separator()
-                .action_disabled_when(!can_undo, "Undo", Box::new(Undo))
-                .action_disabled_when(!can_redo, "Redo", Box::new(Redo))
-                .separator()
-                .action(bookmark_label, Box::new(ToggleBookmark))
-                .separator()
-                .action_disabled_when(!has_selection, "Move to Trash", Box::new(Trash))
-                .action_disabled_when(!has_selection, "Delete Permanently", Box::new(Delete))
-        });
-        window.focus(&menu.focus_handle(cx), cx);
-        let subscription = cx.subscribe(&menu, |this, _, _: &DismissEvent, cx| {
-            this.context_menu.take();
-            cx.notify();
-        });
-        self.context_menu = Some(DeployedContextMenu {
-            menu,
-            position,
-            _subscription: subscription,
-        });
-        cx.notify();
+        }
     }
 
     /// Renders the deployed context menu, if any.
@@ -167,7 +228,7 @@ impl FileManagerPanel {
         );
     }
 
-    /// The "New" menu of the command bar.
+    /// The "New" menu of the header bar's new control.
     ///
     /// Mirrors OpenXplorer's `openNewMenu`
     /// (`native/crates/ox-app/src/window/command_bar/menus.rs`): a folder, a
@@ -230,23 +291,45 @@ impl FileManagerPanel {
         );
     }
 
-    /// The "Sort" menu of the command bar.
-    pub(crate) fn deploy_sort_menu(
+    /// The view menu of the header bar.
+    ///
+    /// Follows GNOME Files' `view_menu` (`nautilus-view-controls.blp`): the
+    /// icon size first, then the sorting options, then "Show hidden files".
+    /// The view-mode entries and the details-pane toggle are ours; the mode
+    /// itself is also one click away on the header bar's split button.
+    pub(crate) fn deploy_view_menu(
         &mut self,
         position: Point<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let panel = cx.entity();
+        let view_mode = self.view_mode;
         let sort_mode = self.sort_mode;
+        let show_hidden = self.show_hidden;
+        let details_pane_visible = self.details_pane_visible;
+
         self.deploy_menu(
             position,
             move |menu, _, _| {
-                menu.entry(
+                menu.entry("Smaller icons", None, {
+                    let panel = panel.clone();
+                    move |_, cx| {
+                        panel.update(cx, |state, cx| state.decrease_icon_size(cx));
+                    }
+                })
+                .entry("Larger icons", None, {
+                    let panel = panel.clone();
+                    move |_, cx| {
+                        panel.update(cx, |state, cx| state.increase_icon_size(cx));
+                    }
+                })
+                .separator()
+                .entry(
                     if sort_mode.is_name() {
-                        "Name ✓"
+                        "Sort by name ✓"
                     } else {
-                        "Name"
+                        "Sort by name"
                     },
                     None,
                     {
@@ -258,9 +341,9 @@ impl FileManagerPanel {
                 )
                 .entry(
                     if sort_mode.is_modified() {
-                        "Date modified ✓"
+                        "Sort by date modified ✓"
                     } else {
-                        "Date modified"
+                        "Sort by date modified"
                     },
                     None,
                     {
@@ -272,64 +355,15 @@ impl FileManagerPanel {
                 )
                 .entry(
                     if sort_mode.is_size() {
-                        "Size ✓"
+                        "Sort by size ✓"
                     } else {
-                        "Size"
+                        "Sort by size"
                     },
                     None,
                     {
                         let panel = panel.clone();
                         move |window, cx| {
                             panel.update(cx, |state, cx| state.sort_by_size(window, cx));
-                        }
-                    },
-                )
-            },
-            window,
-            cx,
-        );
-    }
-
-    /// The "View" menu of the command bar.
-    pub(crate) fn deploy_view_menu(
-        &mut self,
-        position: Point<Pixels>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let panel = cx.entity();
-        let view_mode = self.view_mode;
-        let show_hidden = self.show_hidden;
-        let sidebar_visible = self.sidebar_visible;
-        self.deploy_menu(
-            position,
-            move |menu, _, _| {
-                menu.entry(
-                    if view_mode == ViewMode::Details {
-                        "Details ✓"
-                    } else {
-                        "Details"
-                    },
-                    None,
-                    {
-                        let panel = panel.clone();
-                        move |_, cx| {
-                            panel
-                                .update(cx, |state, cx| state.set_view_mode(ViewMode::Details, cx));
-                        }
-                    },
-                )
-                .entry(
-                    if view_mode == ViewMode::Grid {
-                        "Large icons ✓"
-                    } else {
-                        "Large icons"
-                    },
-                    None,
-                    {
-                        let panel = panel.clone();
-                        move |_, cx| {
-                            panel.update(cx, |state, cx| state.set_view_mode(ViewMode::Grid, cx));
                         }
                     },
                 )
@@ -348,48 +382,50 @@ impl FileManagerPanel {
                         }
                     },
                 )
+                .separator()
                 .entry(
-                    if sidebar_visible {
-                        "Hide navigation pane"
+                    if view_mode == ViewMode::Details {
+                        "List view ✓"
                     } else {
-                        "Show navigation pane"
+                        "List view"
                     },
                     None,
                     {
                         let panel = panel.clone();
                         move |_, cx| {
-                            panel.update(cx, |state, cx| state.toggle_sidebar(cx));
+                            panel
+                                .update(cx, |state, cx| state.set_view_mode(ViewMode::Details, cx));
                         }
                     },
                 )
-            },
-            window,
-            cx,
-        );
-    }
-
-    /// The "More" menu of the command bar.
-    pub(crate) fn deploy_more_menu(
-        &mut self,
-        position: Point<Pixels>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let has_selection = !self.selected.is_empty();
-        let can_undo = self.undo_manager.can_undo();
-        let can_redo = self.undo_manager.can_redo();
-        self.deploy_menu(
-            position,
-            move |menu, _, _| {
-                menu.action_disabled_when(!has_selection, "Rename", Box::new(Rename))
-                    .action_disabled_when(!has_selection, "Copy", Box::new(Copy))
-                    .action_disabled_when(!has_selection, "Cut", Box::new(Cut))
-                    .separator()
-                    .action_disabled_when(!can_undo, "Undo", Box::new(Undo))
-                    .action_disabled_when(!can_redo, "Redo", Box::new(Redo))
-                    .separator()
-                    .action_disabled_when(!has_selection, "Move to Trash", Box::new(Trash))
-                    .action_disabled_when(!has_selection, "Delete Permanently", Box::new(Delete))
+                .entry(
+                    if view_mode == ViewMode::Grid {
+                        "Grid view ✓"
+                    } else {
+                        "Grid view"
+                    },
+                    None,
+                    {
+                        let panel = panel.clone();
+                        move |_, cx| {
+                            panel.update(cx, |state, cx| state.set_view_mode(ViewMode::Grid, cx));
+                        }
+                    },
+                )
+                .entry(
+                    if details_pane_visible {
+                        "Hide details pane"
+                    } else {
+                        "Show details pane"
+                    },
+                    None,
+                    {
+                        let panel = panel.clone();
+                        move |_, cx| {
+                            panel.update(cx, |state, cx| state.toggle_details_pane(cx));
+                        }
+                    },
+                )
             },
             window,
             cx,

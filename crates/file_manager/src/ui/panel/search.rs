@@ -13,15 +13,29 @@ impl FileManagerPanel {
     /// Opens or closes the search mode.
     ///
     /// The location slot is shared with the path bar (like GNOME Files), so
-    /// entering the search leaves the editable path.
-    pub(crate) fn toggle_search(&mut self, cx: &mut Context<Self>) {
+    /// entering the search leaves the editable path. Opening the mode focuses
+    /// the entry, exactly like GNOME's search ToggleButton swaps the toolbar to
+    /// the search page and grabs the focus.
+    pub(crate) fn toggle_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match self.search_query.take() {
             Some(_) => {
                 self.clear_search_results();
+                self.search_field
+                    .update(cx, |field, cx| field.set_text("", window, cx));
+                window.focus(&self.focus_handle, cx);
             }
             None => {
                 self.path_edit = None;
+                // Only one inline editor may hold the focus, like
+                // `project_panel` discarding its edit state on a new action.
+                if self.rename_state.is_some() {
+                    self.cancel_rename(window, cx);
+                }
                 self.search_query = Some(String::new());
+                self.search_field
+                    .update(cx, |field, cx| field.set_text("", window, cx));
+                let focus = self.search_field.read(cx).focus_handle(cx);
+                window.focus(&focus, cx);
                 self.clear_search_results();
             }
         }
@@ -41,6 +55,15 @@ impl FileManagerPanel {
         self.search_running = false;
         self.search_generation = self.search_generation.wrapping_add(1);
     }
+
+    /// Starts the search after a short delay.
+    ///
+    /// GNOME Files coalesces the keystrokes of one burst into an idle callback
+    /// (`nautilus-query-editor.c::entry_changed_cb` uses `g_idle_add_once`), so
+    /// typing fast does not walk the tree once per character. The delay also
+    /// makes a pending run cancellable by [`Self::clear_search_results`], which
+    /// bumps the same generation counter.
+    const SEARCH_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(120);
 
     /// Starts (or restarts) the recursive search for the current query.
     ///
@@ -71,6 +94,15 @@ impl FileManagerPanel {
         self.selected.clear();
         self.selection_anchor = None;
         self._search_task = Some(cx.spawn_in(window, async move |this, cx| {
+            // Coalesce a burst of keystrokes instead of walking the tree once
+            // per character.
+            cx.background_executor().timer(Self::SEARCH_DEBOUNCE).await;
+            if !matches!(
+                this.read_with(cx, |this, _| this.search_generation == generation),
+                Ok(true)
+            ) {
+                return;
+            }
             let result =
                 crate::model::search::search_directory(fs, root, query, show_hidden, sort_mode)
                     .await;
@@ -93,20 +125,5 @@ impl FileManagerPanel {
             .log_err();
         }));
         cx.notify();
-    }
-    /// Appends a keystroke to the search query and restarts the search.
-    pub(crate) fn search_input(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(query) = self.search_query.as_mut() {
-            query.push_str(key);
-        }
-        self.start_search(window, cx);
-    }
-
-    /// Removes the last character of the search query.
-    pub(crate) fn search_backspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(query) = self.search_query.as_mut() {
-            query.pop();
-        }
-        self.start_search(window, cx);
     }
 }
