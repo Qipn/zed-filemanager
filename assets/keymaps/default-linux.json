@@ -1055,6 +1055,27 @@
     },
   },
   {
+    "context": "FileManagerPanel",
+    "bindings": {
+      "enter": "file_manager::Open",
+      "f2": "file_manager::Rename",
+      "cut": "file_manager::Cut",
+      "ctrl-x": "file_manager::Cut",
+      "copy": "file_manager::Copy",
+      "ctrl-c": "file_manager::Copy",
+      "paste": "file_manager::Paste",
+      "ctrl-v": "file_manager::Paste",
+      "undo": "file_manager::Undo",
+      "ctrl-z": "file_manager::Undo",
+      "redo": "file_manager::Redo",
+      "ctrl-shift-z": "file_manager::Redo",
+      "menu": "file_manager::OpenContextMenu",
+      "shift-f10": "file_manager::OpenContextMenu",
+      "f9": "file_manager::ToggleSidebar",
+      "ctrl-shift-i": "file_manager::ToggleViewMode",
+    },
+  },
+  {
     "context": "GitPanel",
     "bindings": {
       "ctrl-1": "git_panel::ActivateChangesTab",

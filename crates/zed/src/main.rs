@@ -745,6 +745,7 @@ fn main() {
         call_hierarchy::init(cx);
         project_symbols::init(cx);
         project_panel::init(cx);
+        file_manager::init(cx);
         outline_panel::init(cx);
         tasks_ui::init(cx);
         snippets_ui::init(cx);

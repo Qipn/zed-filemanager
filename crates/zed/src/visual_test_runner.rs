@@ -186,6 +186,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         title_bar::init(cx);
         project_panel::init(cx);
+        file_manager::init(cx);
         outline_panel::init(cx);
         terminal_view::init(cx);
         image_viewer::init(cx);

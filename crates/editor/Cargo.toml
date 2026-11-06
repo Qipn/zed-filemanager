@@ -49,6 +49,7 @@ buffer_diff.workspace = true
 emojis.workspace = true
 feature_flags.workspace = true
 file_icons.workspace = true
+file_manager.workspace = true
 futures.workspace = true
 futures-lite.workspace = true
 fuzzy.workspace = true

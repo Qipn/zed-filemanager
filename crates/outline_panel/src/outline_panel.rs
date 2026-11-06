@@ -2338,15 +2338,28 @@ impl OutlinePanel {
     fn reveal_in_finder(
         &mut self,
         _: &RevealInFileManager,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(abs_path) = self
             .selected_entry()
             .and_then(|entry| self.abs_path(entry, cx))
         {
-            self.project
-                .update(cx, |project, cx| project.reveal_path(&abs_path, cx));
+            let revealed = self
+                .workspace
+                .update(cx, |workspace, cx| {
+                    file_manager::reveal_in_file_manager(
+                        workspace,
+                        abs_path.clone(),
+                        window,
+                        cx,
+                    )
+                })
+                .unwrap_or(false);
+            if !revealed {
+                self.project
+                    .update(cx, |project, cx| project.reveal_path(&abs_path, cx));
+            }
         }
     }
 

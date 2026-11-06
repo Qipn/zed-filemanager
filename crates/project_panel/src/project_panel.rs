@@ -4130,12 +4130,20 @@ impl ProjectPanel {
     fn reveal_in_finder(
         &mut self,
         _: &RevealInFileManager,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(path) = self.reveal_in_file_manager_path(cx) {
-            self.project
-                .update(cx, |project, cx| project.reveal_path(&path, cx));
+            let revealed = self
+                .workspace
+                .update(cx, |workspace, cx| {
+                    file_manager::reveal_in_file_manager(workspace, path.clone(), window, cx)
+                })
+                .unwrap_or(false);
+            if !revealed {
+                self.project
+                    .update(cx, |project, cx| project.reveal_path(&path, cx));
+            }
         }
     }
 

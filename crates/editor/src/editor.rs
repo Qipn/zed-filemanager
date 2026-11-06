@@ -9088,10 +9088,18 @@ impl Editor {
     fn reveal_in_finder(
         &mut self,
         _: &RevealInFileManager,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(path) = self.target_file_abs_path(cx) {
+            if let Some(workspace) = self.workspace() {
+                let revealed = workspace.update(cx, |workspace, cx| {
+                    file_manager::reveal_in_file_manager(workspace, path.to_path_buf(), window, cx)
+                });
+                if revealed {
+                    return;
+                }
+            }
             if let Some(project) = self.project() {
                 project.update(cx, |project, cx| project.reveal_path(&path, cx));
             } else {

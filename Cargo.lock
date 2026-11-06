@@ -5426,6 +5426,7 @@ dependencies = [
  "emojis",
  "feature_flags",
  "file_icons",
+ "file_manager",
  "fs",
  "futures 0.3.34",
  "futures-lite 2.6.1",
@@ -6300,6 +6301,25 @@ dependencies = [
  "settings_content",
  "theme",
  "util",
+]
+
+[[package]]
+name = "file_manager"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "fs",
+ "futures 0.3.34",
+ "gpui",
+ "log",
+ "project",
+ "settings",
+ "theme",
+ "theme_settings",
+ "ui",
+ "util",
+ "workspace",
 ]
 
 [[package]]
@@ -12409,6 +12429,7 @@ dependencies = [
  "db",
  "editor",
  "file_icons",
+ "file_manager",
  "futures 0.3.34",
  "fuzzy",
  "git",
@@ -13956,6 +13977,7 @@ dependencies = [
  "criterion",
  "editor",
  "file_icons",
+ "file_manager",
  "fs",
  "futures 0.3.34",
  "git",
@@ -22436,6 +22458,7 @@ dependencies = [
  "feature_flags",
  "feedback",
  "file_finder",
+ "file_manager",
  "fs",
  "futures 0.3.34",
  "git",
