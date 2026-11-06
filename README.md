@@ -181,7 +181,7 @@ script/install-native --uninstall
 script/install-native --dry-run
 
 # 顶掉 nixpkgs 装的编辑器（~/.local/bin 在 PATH 里早于系统 profile）
-script/install-native --name zeditor --hardlink
+script/install-native --name zeditor --link
 ```
 
 > **不要用 `--name zed`**：NixOS 系统 profile 里的 `zed` 是 **ZFS Event Daemon**
@@ -199,6 +199,38 @@ script/install-native --name zeditor --hardlink
 - 在 Flatpak 沙箱里跑这个脚本也不会装错地方：它忽略沙箱的 `XDG_DATA_HOME`
   （那个指向 `~/.var/app/<id>/data`），直接写真实的 `$HOME`
 - 它与 Flatpak 版用同一个 app id，desktop 条目会互相覆盖（`~/.local/share` 优先）
+
+#### 三种落地方式与一个曾经的坑
+
+| 方式 | 占空间 | 重新编译后 |
+|---|---|---|
+| 默认（拷贝） | ~356 MB | 需要重跑一次 install |
+| `--link`（符号链接） | 0 | 自动生效 |
+| `--hardlink` | 0 | 仍指向旧产物（重新编译会换 inode） |
+
+**曾经的坑（已修）**：`--link` 装完之后再跑一次**不带** `--link` 的安装，
+`install -Dm755 target/release/zed ~/.local/bin/<name>-bin` 会**透过符号链接**写回源文件，
+把 `target/release/zed`（356 MB ELF）覆盖成 509 字节的启动器脚本。之后启动器互相 `exec`，
+而启动器每轮又往 `LD_LIBRARY_PATH` 拼一次，环境变量越滚越大，最终 `execve` 返回
+**E2BIG —— 中文报「参数列表过长」**。
+
+现在的防护：
+
+- `is_elf()` 校验 magic `\x7fELF`：源不是真 ELF 就报错并提示重新编译（不再把脚本当二进制装）
+- 安装前 `rm -f` 目标，杜绝透过符号链接写回源文件
+- 启动器改成幂等：`case ":$LD_LIBRARY_PATH:" in *":$WAYLAND_LIB:"*) ;; *) … esac`
+- 源与目标同路径时直接拒绝
+- 会遮蔽已有命令时打印 `note: zeditor 现在指向 /run/current-system/sw/bin/zeditor…`
+
+万一还是把 `target/release/zed` 弄坏了：从之前的 flatpak bundle 里能捞回来（那版还没拆
+launcher，二进制就叫 `zed`，已 strip 但能直接用）：
+
+```bash
+flatpak install --user -y target/release/io.github.qipn.ZedFileManager.flatpak
+SRC=~/.local/share/flatpak/app/io.github.qipn.ZedFileManager/current/active/files/bin/zed
+rm -f target/release/zed && cp --reflink=auto "$SRC" target/release/zed && chmod 755 target/release/zed
+flatpak uninstall --user -y io.github.qipn.ZedFileManager
+```
 
 ### 打包成 Flatpak 安装到本地
 
