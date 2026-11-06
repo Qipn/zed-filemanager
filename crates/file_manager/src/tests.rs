@@ -766,6 +766,117 @@ async fn test_render_grid_and_details_pane(cx: &mut TestAppContext) {
     });
 }
 
+/// `Tab` in the path editor completes a unique entry and appends the separator
+/// for a folder.
+#[gpui::test]
+async fn test_path_completion(cx: &mut TestAppContext) {
+    init_globals(cx);
+
+    let fs = fs::FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/home/alice",
+        serde_json::json!({ "projects": {}, "pictures": {}, "README.md": "x" }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), ["/home/alice".as_ref()], cx).await;
+    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        FileManagerPanel::new(workspace, window, cx)
+    });
+    let window = cx.update(|_window, cx| {
+        cx.open_window(WindowOptions::default(), |_window, _cx| panel.clone())
+            .expect("failed to open the test window")
+    });
+    let window = window.into();
+    cx.background_executor.run_until_parked();
+
+    cx.update_window(window, |_, window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.begin_path_edit(window, cx);
+            panel.path_field.update(cx, |field, cx| {
+                field.set_text("/home/alice/pro", window, cx);
+            });
+            panel.complete_path(window, cx);
+        });
+    })
+    .unwrap();
+    cx.background_executor.run_until_parked();
+
+    panel.read_with(cx, |panel, cx| {
+        assert_eq!(
+            panel.path_field.read(cx).content(),
+            "/home/alice/projects/",
+            "a unique folder is completed with a trailing separator"
+        );
+    });
+
+    // Two matches with a common prefix: only the prefix is added. `projects` and
+    // `pictures` share nothing beyond the `p` that was typed, so the text stays.
+    cx.update_window(window, |_, window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.path_field.update(cx, |field, cx| {
+                field.set_text("/home/alice/p", window, cx);
+            });
+            panel.complete_path(window, cx);
+        });
+    })
+    .unwrap();
+    cx.background_executor.run_until_parked();
+
+    panel.read_with(cx, |panel, cx| {
+        assert_eq!(panel.path_field.read(cx).content(), "/home/alice/p");
+    });
+}
+
+/// Batch rename applies one `#` pattern to the whole selection and keeps each
+/// file's extension when the pattern has none.
+#[gpui::test]
+async fn test_batch_rename_with_a_pattern(cx: &mut TestAppContext) {
+    init_globals(cx);
+
+    let fs = fs::FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/home/alice",
+        serde_json::json!({ "a.txt": "1", "b.txt": "2" }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), ["/home/alice".as_ref()], cx).await;
+    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        FileManagerPanel::new(workspace, window, cx)
+    });
+    let window = cx.update(|_window, cx| {
+        cx.open_window(WindowOptions::default(), |_window, _cx| panel.clone())
+            .expect("failed to open the test window")
+    });
+    let window = window.into();
+    cx.background_executor.run_until_parked();
+
+    cx.update_window(window, |_, window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.selected = vec![
+                std::path::PathBuf::from("/home/alice/a.txt"),
+                std::path::PathBuf::from("/home/alice/b.txt"),
+            ];
+            panel.begin_batch_rename(window, cx);
+            panel.batch_field.update(cx, |field, cx| {
+                field.set_text("photo-#", window, cx);
+            });
+            panel.confirm_batch_rename(window, cx);
+        });
+    })
+    .unwrap();
+    cx.background_executor.run_until_parked();
+
+    assert!(fs.path_exists(std::path::Path::new("/home/alice/photo-1.txt")));
+    assert!(fs.path_exists(std::path::Path::new("/home/alice/photo-2.txt")));
+    assert!(!fs.path_exists(std::path::Path::new("/home/alice/a.txt")));
+
+    panel.read_with(cx, |panel, _cx| {
+        assert!(panel.error.is_none(), "error: {:?}", panel.error);
+    });
+}
+
 /// The search filters: scope, file kind and content matching.
 #[gpui::test]
 async fn test_search_filters(cx: &mut TestAppContext) {

@@ -11,6 +11,7 @@ use ui::{Button, ButtonSize, Color, Icon, IconName, IconSize, Label, LabelSize, 
 use crate::model::entries::DirEntry;
 use crate::ui::ox_theme::{metrics, palette};
 use crate::ui::panel::FileManagerPanel;
+use crate::ui::panel::preview::is_image;
 use crate::ui::views::format_modified;
 
 /// Renders the details pane, if an entry is selected.
@@ -67,12 +68,7 @@ pub(crate) fn render_details_pane(
                     .flex_col()
                     .items_center()
                     .justify_center()
-                    .child(crate::ui::views::entry_icon(
-                        &entry,
-                        false,
-                        IconSize::XLarge,
-                        cx,
-                    )),
+                    .child(preview_element(this, &entry, cx)),
             )
             // The name and the kind of the entry.
             .child(
@@ -161,4 +157,31 @@ fn size_label(entry: &DirEntry) -> String {
         .len
         .map(crate::model::entries::format_len)
         .unwrap_or_else(|| "—".into())
+}
+
+/// What the pane shows for the entry: the picture itself for images, the start
+/// of the file once `Space` loaded the text preview, and the theme icon
+/// otherwise.
+fn preview_element(
+    this: &FileManagerPanel,
+    entry: &DirEntry,
+    cx: &mut Context<FileManagerPanel>,
+) -> AnyElement {
+    if !entry.is_dir && is_image(&entry.path) {
+        return gpui::img(entry.path.clone())
+            .max_w(px(240.))
+            .max_h(px(180.))
+            .into_any_element();
+    }
+
+    if let Some(text) = this.preview_text_for(&entry.path) {
+        return div()
+            .w_full()
+            .max_h(px(190.))
+            .overflow_hidden()
+            .child(Label::new(text).size(LabelSize::XSmall).line_clamp(14))
+            .into_any_element();
+    }
+
+    crate::ui::views::entry_icon(entry, false, IconSize::XLarge, cx)
 }

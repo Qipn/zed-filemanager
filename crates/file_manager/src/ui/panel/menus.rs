@@ -51,17 +51,20 @@ impl FileManagerPanel {
         cx: &mut Context<Self>,
     ) {
         let has_selection = !self.selected.is_empty();
+        let multiple_selection = self.selected.len() > 1;
         let has_clipboard = self.clipboard.is_some();
         // Only a folder can become a workspace root (a file would silently open
         // its parent, which is not what the menu says).
         let selection_is_dir = self.selected_entry().is_some_and(|entry| entry.is_dir);
         let bookmark_label = self.bookmark_toggle_label();
         let focus_handle = self.focus_handle.clone();
+        let panel = cx.entity();
 
         self.deploy_menu(
             position,
             move |menu, _, _| {
-                menu.context(focus_handle.clone())
+                let mut menu = menu
+                    .context(focus_handle.clone())
                     .action_disabled_when(!has_selection, "Open", Box::new(Open))
                     // Two explicit entries instead of one that silently picks a
                     // mode: opening in this window switches workspace (and keeps
@@ -78,8 +81,19 @@ impl FileManagerPanel {
                         Box::new(OpenAsWorkspace),
                     )
                     .separator()
-                    .action_disabled_when(!has_selection, "Rename", Box::new(Rename))
-                    .action_disabled_when(!has_selection, "Copy", Box::new(Copy))
+                    .action_disabled_when(!has_selection, "Rename", Box::new(Rename));
+
+                // Only meaningful for more than one item.
+                if multiple_selection {
+                    let panel = panel.clone();
+                    menu = menu.entry("Batch rename…", None, move |window, cx| {
+                        panel.update(cx, |state, cx| {
+                            state.begin_batch_rename(window, cx);
+                        });
+                    });
+                }
+
+                menu.action_disabled_when(!has_selection, "Copy", Box::new(Copy))
                     .action_disabled_when(!has_selection, "Cut", Box::new(Cut))
                     .action_disabled_when(!has_clipboard, "Paste", Box::new(Paste))
                     .separator()

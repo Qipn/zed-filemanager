@@ -7,6 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
+use futures::StreamExt;
 use gpui::{Context, DismissEvent, Focusable, Pixels, Point, SharedString, Window};
 use util::ResultExt;
 
@@ -51,7 +52,9 @@ impl FileManagerPanel {
     /// `FileManagerPanel` therefore routes Escape here
     /// (`assets/keymaps/default-linux.json`).
     pub(crate) fn cancel_active_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.path_editing {
+        if self.batch_rename_open {
+            self.cancel_batch_rename(window, cx);
+        } else if self.path_editing {
             self.cancel_path_edit(window, cx);
         } else if self.rename_state.is_some() {
             self.cancel_rename(window, cx);
@@ -67,7 +70,9 @@ impl FileManagerPanel {
     /// `enter` to `menu::Confirm` and key bindings are dispatched before the
     /// text fields' own key handlers, so the fields cannot confirm themselves.
     pub(crate) fn confirm_active_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.path_editing {
+        if self.batch_rename_open {
+            self.confirm_batch_rename(window, cx);
+        } else if self.path_editing {
             self.confirm_path_edit(window, cx);
         } else if self.rename_state.is_some() {
             self.confirm_rename(window, cx);
@@ -81,6 +86,95 @@ impl FileManagerPanel {
     /// Supports `~`, relative paths (against the current directory) and symlink-
     /// free lexical joins. A directory is navigated into; a file selects it in
     /// its parent; a missing path keeps the editor open with the error shown.
+    /// `Tab` in the path editor: completes the last component.
+    ///
+    /// The text is split at the last `/`; the directory part is resolved the same
+    /// way [`Self::confirm_path_edit`] resolves it (`~`, relative paths), the
+    /// directory is read, and the completion is the only match — or the longest
+    /// common prefix when several entries match.
+    pub(crate) fn complete_path(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let raw = self.path_field.read(cx).content().to_string();
+        if raw.trim().is_empty() {
+            return;
+        }
+
+        let (head, prefix) = match raw.rfind('/') {
+            Some(index) => (raw[..=index].to_string(), raw[index + 1..].to_string()),
+            None => (String::new(), raw.clone()),
+        };
+
+        let directory = if head.is_empty() {
+            match &self.current_dir {
+                Some(directory) => directory.clone(),
+                None => return,
+            }
+        } else if let Some(stripped) = head.strip_prefix('~') {
+            util::paths::home_dir().join(stripped.trim_start_matches('/'))
+        } else {
+            PathBuf::from(&head)
+        };
+        let directory = if directory.is_relative() {
+            match &self.current_dir {
+                Some(current) => current.join(directory),
+                None => return,
+            }
+        } else {
+            directory
+        };
+
+        let fs = self.fs.clone();
+        self._operation_task = Some(cx.spawn_in(window, async move |this, cx| {
+            let Ok(mut stream) = fs.read_dir(&directory).await else {
+                return;
+            };
+            let mut names: Vec<(String, bool)> = Vec::new();
+            while let Some(path) = stream.next().await {
+                let Ok(path) = path else { continue };
+                let Some(name) = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+                else {
+                    continue;
+                };
+                if !name.to_lowercase().starts_with(&prefix.to_lowercase()) {
+                    continue;
+                }
+                let is_dir = fs.is_dir(&path).await;
+                names.push((name, is_dir));
+                // A directory with thousands of matches must not hold the UI.
+                if names.len() > 64 {
+                    break;
+                }
+            }
+
+            let completion = match names.len() {
+                0 => return,
+                1 => {
+                    let (name, is_dir) = &names[0];
+                    if *is_dir {
+                        format!("{name}{}", std::path::MAIN_SEPARATOR)
+                    } else {
+                        name.clone()
+                    }
+                }
+                _ => common_prefix(names.iter().map(|(name, _)| name.as_str())),
+            };
+            if completion.is_empty() {
+                return;
+            }
+
+            let text = format!("{head}{completion}");
+            this.update_in(cx, |this, window, cx| {
+                this.path_field.update(cx, |field, cx| {
+                    let end = text.len();
+                    field.set_text_with_selection(&text, end..end, window, cx);
+                });
+                cx.notify();
+            })
+            .log_err();
+        }));
+    }
+
     pub(crate) fn confirm_path_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.path_editing {
             return;
@@ -274,4 +368,21 @@ impl FileManagerPanel {
             .log_err();
         }));
     }
+}
+
+/// The longest prefix shared by every name, for `Tab` completion of several
+/// matches.
+fn common_prefix<'a>(mut names: impl Iterator<Item = &'a str>) -> String {
+    let Some(first) = names.next() else {
+        return String::new();
+    };
+    let mut prefix = first.to_string();
+    for name in names {
+        while !name.starts_with(&prefix) {
+            if prefix.pop().is_none() {
+                return String::new();
+            }
+        }
+    }
+    prefix
 }

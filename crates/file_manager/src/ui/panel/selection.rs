@@ -291,7 +291,9 @@ impl FileManagerPanel {
             return;
         }
         if self.path_editing {
-            if event.keystroke.key == "escape" {
+            if event.keystroke.key == "tab" {
+                self.complete_path(window, cx);
+            } else if event.keystroke.key == "escape" {
                 self.cancel_path_edit(window, cx);
             } else {
                 let field = self.path_field.clone();
@@ -312,6 +314,11 @@ impl FileManagerPanel {
         }
 
         match event.keystroke.key.as_str() {
+            "space" => {
+                // Quick look, like GNOME Files' previewer.
+                self.toggle_preview(window, cx);
+                cx.stop_propagation();
+            }
             "up" => {
                 self.select_relative(-1, modifiers.shift, cx);
                 cx.stop_propagation();

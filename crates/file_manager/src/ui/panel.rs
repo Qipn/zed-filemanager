@@ -2,6 +2,7 @@
 //! `Panel` trait implementation. Rendering lives in `render.rs`, the menu
 //! builders in `panel/menus.rs`.
 
+mod batch_rename;
 mod bookmarks;
 pub(crate) mod columns;
 mod file_ops;
@@ -11,6 +12,7 @@ mod location;
 mod menus;
 mod navigation;
 mod persistence;
+pub(crate) mod preview;
 mod rename;
 mod search;
 mod selection;
@@ -171,6 +173,14 @@ pub struct FileManagerPanel {
     pub(crate) conflict_field: Entity<SearchField>,
     /// Whether the next conflict answer also applies to every remaining one.
     pub(crate) conflict_apply_to_all: bool,
+    /// Whether the batch rename prompt is open.
+    pub(crate) batch_rename_open: bool,
+    /// The pattern typed in the batch rename prompt.
+    pub(crate) batch_field: Entity<SearchField>,
+    /// The entry the details pane is previewing (`Space`), if any.
+    pub(crate) preview_path: Option<PathBuf>,
+    /// The text snippet loaded for that entry, when it is a text file.
+    pub(crate) preview_text: Option<SharedString>,
     /// Which view shows the contents of the current directory.
     pub(crate) view_mode: ViewMode,
     /// Whether the sidebar (places + folder tree) is shown.
@@ -292,6 +302,10 @@ impl FileManagerPanel {
             transfer_progress: None,
             conflict_field: cx.new(|cx| SearchField::new("file-manager-conflict-input", cx)),
             conflict_apply_to_all: false,
+            batch_rename_open: false,
+            batch_field: cx.new(|cx| SearchField::new("file-manager-batch-input", cx)),
+            preview_path: None,
+            preview_text: None,
             view_mode: state.view_mode,
             sidebar_visible: state.sidebar_visible,
             details_pane_visible: state.details_pane_visible,

@@ -15,6 +15,7 @@
 //! layer lives in `views.rs` (details and grid views) and `sidebar.rs` (places
 //! and folder tree).
 
+mod batch_rename;
 mod body;
 mod conflict_banner;
 mod header;
@@ -22,6 +23,7 @@ mod location;
 mod status_bar;
 mod transfer_progress;
 
+use batch_rename::render_batch_rename;
 use body::render_body;
 use conflict_banner::render_conflict_banner;
 use header::render_header_bar;
@@ -170,6 +172,7 @@ pub(super) fn render(
         }))
         .child(render_header_bar(this, window, cx))
         .children(render_conflict_banner(this, cx))
+        .children(render_batch_rename(this, cx))
         .children(render_transfer_progress(this, cx))
         .child(render_body(this, window, cx))
         .child(render_status_bar(this, cx))
