@@ -6309,11 +6309,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "file_icons",
  "fs",
  "futures 0.3.34",
  "gpui",
  "log",
  "project",
+ "serde_json",
  "settings",
  "theme",
  "theme_settings",

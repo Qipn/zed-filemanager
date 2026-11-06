@@ -53,6 +53,9 @@ impl FileManagerPanel {
         cx: &mut Context<Self>,
     ) {
         if self.current_dir.as_ref() == Some(&directory) {
+            // Clicking the segment of the folder we are already in would be a
+            // no-op; reload instead, so the view never looks stuck.
+            self.refresh(window, cx);
             return;
         }
         self.set_current_dir(directory, None, window, cx);

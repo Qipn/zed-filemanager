@@ -67,19 +67,7 @@ pub(crate) fn render_details_pane(
                     .flex_col()
                     .items_center()
                     .justify_center()
-                    .child(
-                        Icon::new(if entry.is_dir {
-                            IconName::Folder
-                        } else {
-                            IconName::File
-                        })
-                        .size(IconSize::XLarge)
-                        .color(if entry.is_dir {
-                            Color::Accent
-                        } else {
-                            Color::Muted
-                        }),
-                    ),
+                    .child(crate::ui::views::entry_icon(&entry, IconSize::XLarge, cx)),
             )
             // The name and the kind of the entry.
             .child(

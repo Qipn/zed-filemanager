@@ -23,6 +23,7 @@ fs.workspace = true
 gpui.workspace = true
 log.workspace = true
 project.workspace = true
+file_icons.workspace = true
 theme.workspace = true
 ui.workspace = true
 unicode-segmentation.workspace = true
@@ -33,6 +34,7 @@ workspace.workspace = true
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
+serde_json.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 theme_settings.workspace = true
 workspace = { workspace = true, features = ["test-support"] }

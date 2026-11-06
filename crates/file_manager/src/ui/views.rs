@@ -10,8 +10,10 @@
 mod details;
 mod format;
 mod grid;
+mod icons;
 
 pub(crate) use format::format_modified;
+pub(crate) use icons::entry_icon;
 
 use details::render_details_list;
 use grid::render_icon_grid;

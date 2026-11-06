@@ -198,6 +198,132 @@ async fn test_breadcrumb_targets_are_exact_ancestors(cx: &mut TestAppContext) {
     }
 }
 
+/// Navigating through the breadcrumbs must reload the view immediately.
+///
+/// Regression test for "clicking the home segment only refreshes after Enter":
+/// clicking a crumb calls `navigate_to`, which has to bump the loading
+/// generation (i.e. start a new directory read) rather than returning early.
+#[gpui::test]
+async fn test_breadcrumb_navigation_reloads_the_view(cx: &mut TestAppContext) {
+    init_globals(cx);
+
+    let fs = fs::FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/home/alice",
+        serde_json::json!({
+            "projects": { "demo": {} },
+            "notes.txt": "hi",
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), ["/home/alice".as_ref()], cx).await;
+
+    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        FileManagerPanel::new(workspace, window, cx)
+    });
+
+    let window = cx.update(|_window, cx| {
+        cx.open_window(WindowOptions::default(), |_window, _cx| panel.clone())
+            .expect("failed to open the test window")
+    });
+    let window = window.into();
+
+    // Start deep inside the tree, like `/home/alice/projects/demo`.
+    cx.update_window(window, |_, window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.navigate_to(
+                std::path::PathBuf::from("/home/alice/projects/demo"),
+                window,
+                cx,
+            );
+        });
+    })
+    .unwrap();
+    cx.background_executor.run_until_parked();
+
+    let before = panel.read_with(cx, |panel, _cx| panel.loading_generation);
+
+    // Clicking the `alice` crumb navigates up one level.
+    cx.update_window(window, |_, window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.navigate_to(std::path::PathBuf::from("/home/alice"), window, cx);
+        });
+    })
+    .unwrap();
+
+    panel.read_with(cx, |panel, _cx| {
+        assert_eq!(
+            panel.current_dir.as_deref(),
+            Some(std::path::Path::new("/home/alice")),
+            "the crumb click updates the current directory"
+        );
+        assert!(
+            panel.loading_generation > before,
+            "the crumb click starts a new directory load (was {}, now {})",
+            before,
+            panel.loading_generation
+        );
+    });
+}
+
+/// The sidebar tree stays rooted while the user browses.
+///
+/// Regression test for "clicking /bin makes the tree disappear": the tree used
+/// to re-root at the current folder whenever it was outside the home directory,
+/// so `/` → `/bin` rooted the tree at `/bin` (a symlink with no sub-directories
+/// on NixOS), leaving an empty tree.
+#[gpui::test]
+async fn test_tree_root_does_not_follow_the_current_directory(cx: &mut TestAppContext) {
+    init_globals(cx);
+
+    let fs = fs::FakeFs::new(cx.background_executor.clone());
+    let project = Project::test(fs.clone(), ["/home/alice".as_ref()], cx).await;
+
+    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        FileManagerPanel::new(workspace, window, cx)
+    });
+
+    let window = cx.update(|_window, cx| {
+        cx.open_window(WindowOptions::default(), |_window, _cx| panel.clone())
+            .expect("failed to open the test window")
+    });
+    let window = window.into();
+
+    // Outside the home directory the tree spans the whole filesystem.
+    cx.update_window(window, |_, window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.navigate_to(std::path::PathBuf::from("/"), window, cx);
+        });
+    })
+    .unwrap();
+    cx.background_executor.run_until_parked();
+    panel.read_with(cx, |panel, _cx| {
+        assert_eq!(
+            panel.tree_root.as_deref(),
+            Some(std::path::Path::new("/")),
+            "the tree roots at the filesystem root outside home"
+        );
+    });
+
+    // Navigating into a directory of the root must not re-root the tree.
+    cx.update_window(window, |_, window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.navigate_to(std::path::PathBuf::from("/bin"), window, cx);
+        });
+    })
+    .unwrap();
+    cx.background_executor.run_until_parked();
+    panel.read_with(cx, |panel, _cx| {
+        assert_eq!(
+            panel.tree_root.as_deref(),
+            Some(std::path::Path::new("/")),
+            "browsing /bin keeps the tree rooted at /"
+        );
+    });
+}
+
 /// The icon grid view and the details pane render as well.
 #[gpui::test]
 async fn test_render_grid_and_details_pane(cx: &mut TestAppContext) {

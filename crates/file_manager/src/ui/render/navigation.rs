@@ -328,8 +328,11 @@ pub(super) fn render_address_bar(
     for (offset, (target, name)) in visible.iter().enumerate() {
         let index = skipped + offset;
         let is_last = offset + 1 == visible.len();
-        if offset > 0 || skipped > 0 {
-            // The separator sits in front of every crumb but the first.
+        // The root crumb is labelled `/` itself, so a separator after it would
+        // render `//home`. Only insert the slash when the previous crumb does
+        // not already end the path.
+        let previous_is_root = offset > 0 && visible[offset - 1].1.as_ref() == "/";
+        if (offset > 0 && !previous_is_root) || (offset == 0 && skipped > 0) {
             crumbs = crumbs.child(
                 Label::new("/")
                     .size(LabelSize::Small)
@@ -338,32 +341,69 @@ pub(super) fn render_address_bar(
         }
         let target = target.clone();
         let name = name.clone();
-        crumbs =
-            crumbs.child(
-                h_flex()
-                    .id(("file-manager-crumb", index))
-                    .h(px(26.))
-                    .px(px(9.))
-                    .flex_shrink_0()
-                    .rounded_xs()
-                    .hover(|style| style.bg(palette.hover))
-                    .child(Label::new(name).single_line().size(LabelSize::Small).color(
-                        if is_last {
-                            Color::Custom(palette.text)
-                        } else {
-                            Color::Custom(palette.muted)
-                        },
-                    ))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                            // A crumb opens its jump menu; the address bar's own
-                            // handler must not also enter the edit mode.
-                            cx.stop_propagation();
-                            this.deploy_breadcrumb_menu(target.clone(), event.position, window, cx);
-                        }),
-                    ),
+        let navigate_target = target.clone();
+        let menu_target = target.clone();
+
+        let crumb = h_flex()
+            .id(("file-manager-crumb", index))
+            .h(px(26.))
+            .px(px(9.))
+            .flex_shrink_0()
+            .rounded_xs()
+            .child(
+                Label::new(name)
+                    .single_line()
+                    .size(LabelSize::Small)
+                    .color(if is_last {
+                        Color::Custom(palette.text)
+                    } else {
+                        Color::Custom(palette.muted)
+                    }),
             );
+
+        // Nautilus wires the current-folder button to `toolbar.edit-location`
+        // instead of navigation (`nautilus-pathbar.c::make_button_data`):
+        // clicking the folder you are already in switches the path bar to the
+        // editable location entry, and only the ancestors navigate.
+        let crumb = if is_last {
+            crumb.hover(|style| style.bg(palette.hover)).on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    cx.stop_propagation();
+                    this.begin_path_edit(window, cx);
+                }),
+            )
+        } else {
+            crumb
+                // `occlude` makes the crumb an event target of its own, so a
+                // click cannot fall through to the address bar container by
+                // accident.
+                .occlude()
+                .hover(|style| style.bg(palette.hover))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _event: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        this.navigate_to(navigate_target.clone(), window, cx);
+                    }),
+                )
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                        // Right click keeps the lateral jump menu: "go to this
+                        // folder" plus its siblings.
+                        cx.stop_propagation();
+                        this.deploy_breadcrumb_menu(
+                            menu_target.clone(),
+                            event.position,
+                            window,
+                            cx,
+                        );
+                    }),
+                )
+        };
+
+        crumbs = crumbs.child(crumb);
     }
 
     div()
@@ -382,7 +422,11 @@ pub(super) fn render_address_bar(
         .border_1()
         .border_color(palette.border)
         // Clicking the bar itself (the icon, the gaps between crumbs, the space
-        // after the last one) enters the editable path.
+        // after the last one) enters the editable path. The tooltip carries the
+        // discoverability the old trailing chevron used to provide; the chevron
+        // itself was removed because it duplicated this and looked like a
+        // dropdown.
+        .tooltip(Tooltip::text("Click to edit the path (Ctrl+L)"))
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(|this, _, window, cx| {
@@ -396,19 +440,5 @@ pub(super) fn render_address_bar(
                 .color(Color::Custom(palette.muted)),
         )
         .child(crumbs)
-        .child(
-            // The chevron re-enters the edit mode. It stops the mouse-down so the
-            // panel root's background handler does not cancel the edit first.
-            div()
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .child(
-                    IconButton::new("file-manager-edit-path", IconName::ChevronDown)
-                        .icon_size(IconSize::XSmall)
-                        .tooltip(Tooltip::text("Edit location (Ctrl+L)"))
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.begin_path_edit(window, cx)),
-                        ),
-                ),
-        )
         .into_any_element()
 }

@@ -5,7 +5,7 @@ use gpui::{
     uniform_list,
 };
 use theme::ActiveTheme;
-use ui::{Color, Icon, IconName, IconSize, Label, LabelSize, prelude::*, rems_from_px};
+use ui::{Color, IconSize, Label, LabelSize, prelude::*, rems_from_px};
 
 use crate::model::entries::DirEntry;
 use crate::ui::drag::{DragGhost, DraggedPaths};
@@ -48,11 +48,6 @@ pub(super) fn render_tile(
 ) -> AnyElement {
     let palette = palette(cx.theme());
     let selected = this.is_selected(&entry.path);
-    let icon = if entry.is_dir {
-        IconName::Folder
-    } else {
-        IconName::File
-    };
     let clicked_entry = entry.clone();
     let right_click_path = entry.path.clone();
     let drag_path = entry.path.clone();
@@ -90,15 +85,11 @@ pub(super) fn render_tile(
                 .flex_col()
                 .justify_center()
                 .items_center()
-                .child(
-                    Icon::new(icon)
-                        .size(IconSize::Custom(rems_from_px(icon_size)))
-                        .color(if entry.is_dir {
-                            Color::Accent
-                        } else {
-                            Color::Muted
-                        }),
-                ),
+                .child(super::entry_icon(
+                    &entry,
+                    IconSize::Custom(rems_from_px(icon_size)),
+                    cx,
+                )),
         )
         .child({
             // The inline rename editor replaces the tile name while renaming.

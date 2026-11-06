@@ -54,11 +54,6 @@ pub(super) fn render_details_row(
 ) -> AnyElement {
     let palette = palette(cx.theme());
     let selected = this.is_selected(&entry.path);
-    let icon = if entry.is_dir {
-        IconName::Folder
-    } else {
-        IconName::File
-    };
     let right_click_path = entry.path.clone();
     let clicked_entry = entry.clone();
     let drag_path = entry.path.clone();
@@ -169,15 +164,7 @@ pub(super) fn render_details_row(
                                 )
                         }),
                 )
-                .child(
-                    Icon::new(icon)
-                        .size(IconSize::Small)
-                        .color(if entry.is_dir {
-                            Color::Accent
-                        } else {
-                            Color::Muted
-                        }),
-                )
+                .child(super::entry_icon(&entry, IconSize::Small, cx))
                 .child({
                     // While this entry is being renamed the inline editor takes
                     // the place of its name (`project_panel` renders its

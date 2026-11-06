@@ -1,6 +1,6 @@
 //! The sidebar state: the "Places" list and the folder tree.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use gpui::{Context, Window};
 use util::ResultExt;
@@ -35,14 +35,20 @@ impl FileManagerPanel {
 
     /// Makes sure the folder tree has a root and shows its children.
     ///
-    /// OpenXplorer roots the tree at the home directory when the current
-    /// folder lives inside it, and at the current folder otherwise.
+    /// Roots the tree at the home directory while the current folder lives
+    /// inside it, and at the filesystem root otherwise.
+    ///
+    /// The root deliberately does **not** follow the current folder: re-rooting
+    /// on every navigation made the tree jump (clicking `/bin` from `/` rooted
+    /// the tree at `/bin`, which has no sub-directories on NixOS because it is a
+    /// symlink into the store, so the tree looked like it had vanished).
     pub(crate) fn refresh_tree(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let home = home_dir();
         let current = self.current_dir.clone();
         let root = match (&home, &current) {
             (Some(home), Some(current)) if current.starts_with(home) => home.clone(),
-            (_, Some(current)) => current.clone(),
+            // Outside the home directory the tree spans the whole filesystem.
+            (_, Some(_)) => PathBuf::from(std::path::MAIN_SEPARATOR_STR),
             (Some(home), None) => home.clone(),
             (None, None) => return,
         };
