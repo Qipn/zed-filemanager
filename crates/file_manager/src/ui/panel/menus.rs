@@ -12,8 +12,8 @@ use ui::prelude::*;
 use super::{DeployedContextMenu, FileManagerPanel};
 use crate::ui::views::ViewMode;
 use crate::{
-    Copy, Cut, Delete, NewFile, NewFolder, Open, OpenAsWorkspace, Paste, Redo, Refresh, Rename,
-    SelectAll, ToggleBookmark, Trash, Undo,
+    Copy, Cut, Delete, NewFile, NewFolder, Open, OpenAsWorkspace, OpenInThisWindow, Paste, Redo,
+    Refresh, Rename, SelectAll, ToggleBookmark, Trash, Undo,
 };
 
 impl FileManagerPanel {
@@ -60,9 +60,18 @@ impl FileManagerPanel {
             move |menu, _, _| {
                 menu.context(focus_handle.clone())
                     .action_disabled_when(!has_selection, "Open", Box::new(Open))
+                    // Two explicit entries instead of one that silently picks a
+                    // mode: opening in this window switches workspace (and keeps
+                    // the current one in the window's group), opening a new
+                    // window leaves this one untouched.
                     .action_disabled_when(
                         !selection_is_dir,
-                        "Open as Workspace",
+                        "Open in This Window",
+                        Box::new(OpenInThisWindow),
+                    )
+                    .action_disabled_when(
+                        !selection_is_dir,
+                        "Open in New Window",
                         Box::new(OpenAsWorkspace),
                     )
                     .separator()
@@ -119,10 +128,16 @@ impl FileManagerPanel {
                     .action_disabled_when(!has_clipboard, "Paste", Box::new(Paste))
                     .action_disabled_when(!has_entries, "Select All", Box::new(SelectAll))
                     .action("Refresh", Box::new(Refresh))
-                    // The folder being browsed can become a workspace root.
+                    // The folder being browsed can become a workspace root, in
+                    // this window (switching workspace) or in a new one.
                     .action_disabled_when(
                         !has_current_dir,
-                        "Open as Workspace",
+                        "Open in This Window",
+                        Box::new(OpenInThisWindow),
+                    )
+                    .action_disabled_when(
+                        !has_current_dir,
+                        "Open in New Window",
                         Box::new(OpenAsWorkspace),
                     )
                     .separator()

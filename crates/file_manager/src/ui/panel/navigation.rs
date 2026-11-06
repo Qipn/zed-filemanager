@@ -75,25 +75,40 @@ impl FileManagerPanel {
         }
     }
 
-    /// Opens a folder as a new Zed workspace.
+    /// Opens a folder as a new Zed workspace in a **new window**.
     ///
     /// The panel browses folders that may not belong to the current project, so
-    /// this turns "found the folder here, now edit it" into one step. It goes
-    /// through `Workspace::open_workspace_for_paths` with `OpenMode::NewWindow`,
-    /// the same path Zed's own "Open Folder" takes (`recent_projects`), so the
-    /// folder becomes the workspace root and the current window keeps whatever
-    /// it had.
-    ///
-    /// The target is [`Self::workspace_target`]: the selected folder when there
-    /// is one, otherwise the folder being browsed.
+    /// this turns "found the folder here, now edit it" into one step: the folder
+    /// becomes the workspace root and the current window keeps whatever it had.
     pub(crate) fn open_as_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_workspace(OpenMode::NewWindow, window, cx);
+    }
+
+    /// Opens a folder as a workspace **in this window**, switching to it.
+    ///
+    /// `OpenMode::Activate` adds the workspace to this window's workspace group
+    /// and activates it, so the previous workspace stays open and can be
+    /// switched back to from the title bar instead of piling up windows. When the
+    /// folder is already the root of a workspace in this window, Zed activates
+    /// that one instead of opening a duplicate
+    /// (`OpenOptions::workspace_matching` is `MatchExact` for this mode).
+    pub(crate) fn open_workspace_in_this_window(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_workspace(OpenMode::Activate, window, cx);
+    }
+
+    /// Opens [`Self::workspace_target`] as a workspace with the given mode.
+    fn open_workspace(&mut self, mode: OpenMode, window: &mut Window, cx: &mut Context<Self>) {
         let Some(directory) = self.workspace_target() else {
             return;
         };
 
         self.workspace
             .update(cx, |workspace, cx| {
-                workspace.open_workspace_for_paths(OpenMode::NewWindow, vec![directory], window, cx)
+                workspace.open_workspace_for_paths(mode, vec![directory], window, cx)
             })
             .log_err()
             .map(|task| task.detach_and_log_err(cx));
