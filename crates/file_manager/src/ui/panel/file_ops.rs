@@ -148,6 +148,10 @@ impl FileManagerPanel {
                         .record(vec![Change::Created(path.clone())]);
                     this.selected.clear();
                     this.selected.push(path.clone());
+                    // The new entry is somewhere in the sort order, which in a
+                    // long directory can be below the viewport; the load's
+                    // completion scrolls it into view.
+                    this.reveal_in_content(path.clone());
                     this.load_directory(window, cx);
                     // The entry is created with a suggested name and the inline
                     // editor opens on it: Enter keeps the name, typing replaces

@@ -119,6 +119,11 @@ impl FileManagerPanel {
             self.selected.clear();
             self.selected.push(entry.path.clone());
             self.selection_anchor = Some(index);
+            // Keyboard navigation can walk below the viewport, so the row the
+            // selection moved to has to be kept visible. `ScrollStrategy::Nearest`
+            // makes this a no-op for a row that is already fully visible, which is
+            // the usual case when a row is clicked.
+            self.scroll_content_to_path(&entry.path);
             cx.notify();
         }
     }
@@ -172,6 +177,9 @@ impl FileManagerPanel {
         } else {
             self.selected.push(entry.path.clone());
             self.selection_anchor = Some(index);
+            // Only the added row is scrolled to; removing one from the selection
+            // should not move the view.
+            self.scroll_content_to_path(&entry.path);
         }
         cx.notify();
     }
@@ -202,6 +210,10 @@ impl FileManagerPanel {
             if let Some((entry, _)) = rows.get(index) {
                 self.selected.push(entry.path.clone());
             }
+        }
+        // The end the range grew to is the one that may be off-screen.
+        if let Some((entry, _)) = rows.get(index) {
+            self.scroll_content_to_path(&entry.path);
         }
         cx.notify();
     }

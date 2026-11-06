@@ -32,7 +32,9 @@ pub(super) fn render_icon_grid(
         }),
     )
     // See `render_details_list`: the flex parent sizes the list and the list
-    // scrolls its own overflow.
+    // scrolls its own overflow; the handle is the panel's, so a new entry can be
+    // scrolled into view.
+    .track_scroll(&this.content_scroll)
     .flex_grow_1()
     .min_h(px(0.))
     .into_any_element()

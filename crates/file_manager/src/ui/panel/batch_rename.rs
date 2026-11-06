@@ -117,6 +117,11 @@ impl FileManagerPanel {
                 if this.error.is_none() {
                     this.selected.clear();
                     this.selected.extend(written);
+                    // A renamed entry can move to another place in the sort
+                    // order.
+                    if let Some(path) = this.selected.last().cloned() {
+                        this.reveal_in_content(path);
+                    }
                 }
                 this.load_directory(window, cx);
             })

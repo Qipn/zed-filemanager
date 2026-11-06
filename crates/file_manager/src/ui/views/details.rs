@@ -39,6 +39,10 @@ pub(super) fn render_details_list(
     // `min_h(0)` lets it shrink below its content — without it the automatic
     // minimum size keeps the list at content height, so it overflows the pane
     // and the wheel has nothing to scroll.
+    //
+    // `track_scroll` binds the panel's handle, so a file operation can scroll
+    // the entry it just produced into view (`panel::scroll`).
+    .track_scroll(&this.content_scroll)
     .flex_grow_1()
     .min_h(px(0.))
     .into_any_element()

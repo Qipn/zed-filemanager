@@ -14,6 +14,7 @@ mod navigation;
 mod persistence;
 pub(crate) mod preview;
 mod rename;
+mod scroll;
 mod search;
 mod selection;
 mod sidebar_state;
@@ -28,8 +29,8 @@ use anyhow::Result;
 use fs::Fs;
 use gpui::{
     Action, App, AsyncWindowContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    IntoElement, Pixels, Point, Render, ScrollHandle, SharedString, Subscription, Task, WeakEntity,
-    Window, px,
+    IntoElement, Pixels, Point, Render, ScrollHandle, SharedString, Subscription, Task,
+    UniformListScrollHandle, WeakEntity, Window, px,
 };
 use project::Project;
 use ui::prelude::*;
@@ -227,6 +228,14 @@ pub struct FileManagerPanel {
     /// Scroll handle of the folder tree, so revealing the current directory can
     /// scroll it into view (`scroll to reveal`).
     pub(crate) tree_scroll: ScrollHandle,
+    /// Scroll handle of the folder view (details list and icon grid), so a file
+    /// operation can scroll the entry it just created into view
+    /// (`ui::panel::scroll`).
+    pub(crate) content_scroll: UniformListScrollHandle,
+    /// The entry a file operation wants scrolled into view. A create/rename
+    /// hands this over and the next directory load consumes it, because the row
+    /// only exists once the reload has landed.
+    pub(crate) pending_reveal: Option<PathBuf>,
     /// The directory the tree was last revealed for. Revealing only runs when
     /// the current directory changes, so a manual collapse is not undone on
     /// every render.
@@ -326,6 +335,8 @@ impl FileManagerPanel {
             tree_root: None,
             tree_nodes: Vec::new(),
             tree_scroll: ScrollHandle::new(),
+            content_scroll: UniformListScrollHandle::new(),
+            pending_reveal: None,
             last_revealed: None,
             content_width: None,
             disk_space: None,
@@ -505,6 +516,10 @@ impl FileManagerPanel {
                     Ok(entries) => {
                         this.entries = entries;
                         this.error = None;
+                        // The row of an entry a file operation just produced only
+                        // exists now, so this is the first moment it can be
+                        // scrolled into view.
+                        this.reveal_pending_entry(window, cx);
                     }
                     Err(error) => {
                         this.entries.clear();

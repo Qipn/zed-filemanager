@@ -349,6 +349,11 @@ impl FileManagerPanel {
                     }
                     this.selected.clear();
                     this.selected.extend(written);
+                    // Pasted/dropped entries can land below the viewport; the
+                    // last one is the one kept selected.
+                    if let Some(path) = this.selected.last().cloned() {
+                        this.reveal_in_content(path);
+                    }
                     this.load_directory(window, cx);
                 } else {
                     cx.notify();

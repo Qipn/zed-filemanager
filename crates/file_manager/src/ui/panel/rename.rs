@@ -148,6 +148,9 @@ impl FileManagerPanel {
                     this.rename_state = None;
                     this.selected.clear();
                     this.selected.push(target.clone());
+                    // Renaming can move the entry to another place in the sort
+                    // order, so the row has to be found again.
+                    this.reveal_in_content(target.clone());
                     this.load_directory(window, cx);
                     window.focus(&this.focus_handle, cx);
                 }
