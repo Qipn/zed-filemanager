@@ -440,6 +440,77 @@ async fn test_creating_a_folder_starts_and_commits_a_rename(cx: &mut TestAppCont
     );
 }
 
+/// Navigating to a deep path expands the tree down to it.
+///
+/// Regression test for "the tree does not follow the current path": only the
+/// already loaded ancestors used to be expanded, so a path whose middle levels
+/// had never been opened could not be revealed at all.
+#[gpui::test]
+async fn test_tree_reveals_the_current_directory(cx: &mut TestAppContext) {
+    init_globals(cx);
+
+    let fs = fs::FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/home/alice",
+        serde_json::json!({
+            "projects": { "demo": { "src": {} } },
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), ["/home/alice".as_ref()], cx).await;
+
+    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        FileManagerPanel::new(workspace, window, cx)
+    });
+
+    let window = cx.update(|_window, cx| {
+        cx.open_window(WindowOptions::default(), |_window, _cx| panel.clone())
+            .expect("failed to open the test window")
+    });
+    let window = window.into();
+
+    // Jump straight to a deep directory, like a breadcrumb/place jump does.
+    cx.update_window(window, |_, window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.navigate_to(
+                std::path::PathBuf::from("/home/alice/projects/demo/src"),
+                window,
+                cx,
+            );
+        });
+    })
+    .unwrap();
+    cx.background_executor.run_until_parked();
+
+    panel.read_with(cx, |panel, _cx| {
+        // The tree is rooted at home, so `projects` and `demo` are the ancestors
+        // that have to be loaded and expanded.
+        let rows = crate::model::tree::visible_rows(&panel.tree_nodes);
+        let expanded: Vec<&std::path::Path> = rows
+            .iter()
+            .filter(|node| node.expanded)
+            .map(|node| node.path.as_path())
+            .collect();
+
+        assert!(
+            expanded.contains(&std::path::Path::new("/home/alice/projects")),
+            "projects is expanded, rows: {:?}",
+            expanded
+        );
+        assert!(
+            expanded.contains(&std::path::Path::new("/home/alice/projects/demo")),
+            "demo is expanded, rows: {:?}",
+            expanded
+        );
+        // The current directory itself stays collapsed (the chevron owns that).
+        assert!(
+            !expanded.contains(&std::path::Path::new("/home/alice/projects/demo/src")),
+            "the current directory is not expanded"
+        );
+    });
+}
+
 /// The icon grid view and the details pane render as well.
 #[gpui::test]
 async fn test_render_grid_and_details_pane(cx: &mut TestAppContext) {

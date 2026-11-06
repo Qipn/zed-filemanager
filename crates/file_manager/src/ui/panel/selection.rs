@@ -6,10 +6,11 @@
 
 use std::path::{Path, PathBuf};
 
-use gpui::{Context, KeyDownEvent, Window};
+use gpui::{Context, Entity, KeyDownEvent, Window};
 
 use super::FileManagerPanel;
 use crate::model::entries::DirEntry;
+use crate::ui::search_field::SearchField;
 
 impl FileManagerPanel {
     /// The rows shown in the folder view: the entries of the current
@@ -193,6 +194,37 @@ impl FileManagerPanel {
         }
     }
 
+    /// Forwards one keystroke to an inline editor that does not have the focus.
+    ///
+    /// Backspace deletes a grapheme and printable characters are inserted at the
+    /// caret; everything else (arrows, Enter, shortcuts) is left to the keymap
+    /// actions, which reach the panel's `ConfirmInput` / `CancelInput` bindings.
+    fn forward_key_to(
+        &mut self,
+        field: &Entity<SearchField>,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if event.keystroke.key == "backspace" {
+            field.update(cx, |field, cx| field.delete_backward(window, cx));
+            return;
+        }
+
+        let modifiers = event.keystroke.modifiers;
+        if modifiers.control || modifiers.alt || modifiers.platform {
+            return;
+        }
+        if let Some(text) = event
+            .keystroke
+            .key_char
+            .as_deref()
+            .filter(|text| !text.is_empty())
+        {
+            field.update(cx, |field, cx| field.insert_text(text, window, cx));
+        }
+    }
+
     pub(crate) fn handle_key_down(
         &mut self,
         event: &KeyDownEvent,
@@ -200,85 +232,38 @@ impl FileManagerPanel {
         cx: &mut Context<Self>,
     ) {
         let modifiers = event.keystroke.modifiers;
-        // While the search entry is open it owns the keystrokes. The entry is
-        // focused when the mode opens, but clicking the list moves the focus back
-        // to the panel; typing then still belongs to the query, so the keys are
-        // forwarded to the entry instead of being dropped.
+        // The three inline editors (search / location / rename) normally own the
+        // keystrokes, but the focus can sit on the panel instead — a click on the
+        // list moves it there, and a freshly created row is not rendered yet
+        // when its editor opens. Forward the keys in that case instead of
+        // dropping them, so the editor always stays usable. Escape differs per
+        // mode, so the caller handles it.
         if self.search_query.is_some() {
-            match event.keystroke.key.as_str() {
-                "escape" => self.toggle_search(window, cx),
-                "backspace" => self
-                    .search_field
-                    .update(cx, |field, cx| field.delete_backward(window, cx)),
-                key => {
-                    let printable = !modifiers.control && !modifiers.alt && !modifiers.platform;
-                    let text = event
-                        .keystroke
-                        .key_char
-                        .as_deref()
-                        .filter(|text| !text.is_empty());
-                    if let (true, Some(text)) = (printable, text) {
-                        self.search_field
-                            .update(cx, |field, cx| field.insert_text(text, window, cx));
-                    } else {
-                        let _ = key;
-                    }
-                }
+            if event.keystroke.key == "escape" {
+                self.toggle_search(window, cx);
+            } else {
+                let field = self.search_field.clone();
+                self.forward_key_to(&field, event, window, cx);
             }
             cx.stop_propagation();
             return;
         }
-        // While the location entry is open it usually owns the keys, but a click
-        // on the list moves the focus back to the panel; forward typing there too
-        // so the entry stays usable.
         if self.path_editing {
-            match event.keystroke.key.as_str() {
-                "escape" => self.cancel_path_edit(window, cx),
-                "backspace" => self
-                    .path_field
-                    .update(cx, |field, cx| field.delete_backward(window, cx)),
-                key => {
-                    let printable = !modifiers.control && !modifiers.alt && !modifiers.platform;
-                    let text = event
-                        .keystroke
-                        .key_char
-                        .as_deref()
-                        .filter(|text| !text.is_empty());
-                    if let (true, Some(text)) = (printable, text) {
-                        self.path_field
-                            .update(cx, |field, cx| field.insert_text(text, window, cx));
-                    } else {
-                        let _ = key;
-                    }
-                }
+            if event.keystroke.key == "escape" {
+                self.cancel_path_edit(window, cx);
+            } else {
+                let field = self.path_field.clone();
+                self.forward_key_to(&field, event, window, cx);
             }
             cx.stop_propagation();
             return;
         }
-        // While an inline rename is active the rename field usually owns the
-        // keys, but the focus can sit on the panel instead (the row is created
-        // asynchronously, or the user clicked the list). Forward the keys so the
-        // editor keeps working.
         if self.rename_state.is_some() {
-            match event.keystroke.key.as_str() {
-                "escape" => self.cancel_rename(window, cx),
-                "backspace" => self
-                    .rename_field
-                    .update(cx, |field, cx| field.delete_backward(window, cx)),
-                key => {
-                    let printable = !modifiers.control && !modifiers.alt && !modifiers.platform;
-                    let text = event
-                        .keystroke
-                        .key_char
-                        .as_deref()
-                        .filter(|text| !text.is_empty());
-                    if let (true, Some(text)) = (printable, text) {
-                        self.rename_field
-                            .update(cx, |field, cx| field.insert_text(text, window, cx));
-                    } else {
-                        let _ = key;
-                    }
-                }
+            if event.keystroke.key == "escape" {
+                self.cancel_rename(window, cx);
+            } else {
+                let field = self.rename_field.clone();
+                self.forward_key_to(&field, event, window, cx);
             }
             cx.stop_propagation();
             return;

@@ -24,7 +24,8 @@ use anyhow::Result;
 use fs::Fs;
 use gpui::{
     Action, App, AsyncWindowContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    IntoElement, Pixels, Point, Render, SharedString, Subscription, Task, WeakEntity, Window, px,
+    IntoElement, Pixels, Point, Render, ScrollHandle, SharedString, Subscription, Task, WeakEntity,
+    Window, px,
 };
 use project::Project;
 use ui::prelude::*;
@@ -87,6 +88,14 @@ pub struct FileManagerPanel {
     pub(crate) history_index: usize,
     pub(crate) loading_generation: u64,
     pub(crate) _loading_task: Option<Task<()>>,
+    /// Loading the children of the tree root. Kept apart from `_loading_task`
+    /// (the folder view): both used to share one slot, so navigating cancelled
+    /// the tree load and the tree stayed empty.
+    pub(crate) _tree_loading_task: Option<Task<()>>,
+    /// The task that expands the tree down to the current directory
+    /// (`reveal_in_tree`); kept apart from the directory load so navigating does
+    /// not cancel the reveal and vice versa.
+    pub(crate) _tree_task: Option<Task<()>>,
     /// The task of the running search.
     ///
     /// Kept apart from `_loading_task`: a new search must not drop (and thus
@@ -153,6 +162,13 @@ pub struct FileManagerPanel {
     pub(crate) tree_root: Option<PathBuf>,
     /// The direct children of the tree root.
     pub(crate) tree_nodes: Vec<TreeNode>,
+    /// Scroll handle of the folder tree, so revealing the current directory can
+    /// scroll it into view (`scroll to reveal`).
+    pub(crate) tree_scroll: ScrollHandle,
+    /// The directory the tree was last revealed for. Revealing only runs when
+    /// the current directory changes, so a manual collapse is not undone on
+    /// every render.
+    pub(crate) last_revealed: Option<PathBuf>,
     /// The width the panel was last laid out at, used for the responsive
     /// breakpoints. `None` until the first frame.
     pub(crate) content_width: Option<f32>,
@@ -193,6 +209,8 @@ impl FileManagerPanel {
             history_index: 0,
             loading_generation: 0,
             _loading_task: None,
+            _tree_loading_task: None,
+            _tree_task: None,
             _search_task: None,
             _operation_task: None,
             error: None,
@@ -223,6 +241,8 @@ impl FileManagerPanel {
             bookmarks: Vec::new(),
             tree_root: None,
             tree_nodes: Vec::new(),
+            tree_scroll: ScrollHandle::new(),
+            last_revealed: None,
             content_width: None,
         });
 

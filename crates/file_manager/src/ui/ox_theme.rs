@@ -66,6 +66,9 @@ pub(crate) mod metrics {
     pub(crate) const SIDEBAR_ROW: f32 = 35.;
     /// Height of one row in the folder tree.
     pub(crate) const TREE_ROW: f32 = 30.;
+    /// Vertical padding of the folder tree list (`py(px(6.))` in
+    /// `ui/sidebar.rs`), needed to scroll a row into view.
+    pub(crate) const TREE_PANE_PADDING: f32 = 6.;
     /// Indentation per tree level.
     pub(crate) const TREE_INDENT: f32 = 16.;
 

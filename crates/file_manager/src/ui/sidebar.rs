@@ -357,6 +357,8 @@ fn render_tree(
         .flex_1()
         .min_h(px(0.))
         .overflow_y_scroll()
+        // `track_scroll` lets `reveal_in_tree` scroll the current row into view.
+        .track_scroll(&this.tree_scroll)
         .child(list)
         .into_any_element()
 }
