@@ -295,11 +295,40 @@ pub(super) fn render_address_bar(
     }
 
     let segments = this.breadcrumb_targets();
-    let mut crumbs = h_flex().gap(px(2.)).flex_1().min_w(px(0.));
+    // Keep the crumbs that matter in a narrow dock: the earliest ones are
+    // dropped in favour of the last few (the current folder and its parents),
+    // otherwise every label is squeezed and only the tail stays clickable.
+    // GNOME's path bar ellipsizes the middle the same way.
+    let max_segments = if this.breakpoint_width() >= 760. {
+        usize::MAX
+    } else if this.breakpoint_width() >= 480. {
+        4
+    } else {
+        2
+    };
+    let skipped = segments.len().saturating_sub(max_segments);
+    let visible = &segments[skipped..];
 
-    for (index, (target, name)) in segments.iter().enumerate() {
-        let is_last = index + 1 == segments.len();
-        if index > 0 {
+    // The crumbs must not shrink: a squeezed label is both unreadable and hard
+    // to hit.
+    let mut crumbs = h_flex()
+        .gap(px(2.))
+        .flex_1()
+        .min_w(px(0.))
+        .overflow_hidden();
+
+    if skipped > 0 {
+        crumbs = crumbs.child(
+            Label::new("…")
+                .size(LabelSize::Small)
+                .color(Color::Custom(palette.text_tertiary)),
+        );
+    }
+
+    for (offset, (target, name)) in visible.iter().enumerate() {
+        let index = skipped + offset;
+        let is_last = offset + 1 == visible.len();
+        if offset > 0 || skipped > 0 {
             // The separator sits in front of every crumb but the first.
             crumbs = crumbs.child(
                 Label::new("/")
@@ -315,6 +344,7 @@ pub(super) fn render_address_bar(
                     .id(("file-manager-crumb", index))
                     .h(px(26.))
                     .px(px(9.))
+                    .flex_shrink_0()
                     .rounded_xs()
                     .hover(|style| style.bg(palette.hover))
                     .child(Label::new(name).single_line().size(LabelSize::Small).color(

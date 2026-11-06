@@ -382,9 +382,9 @@ impl FileManagerPanel {
         }
     }
     /// Builds and deploys a breadcrumb dropdown for `anchor`: the first entry
-    /// navigates to `anchor` itself, then every directory sibling (i.e. child
-    /// of `anchor`'s parent) is listed for a lateral switch. Called for a
-    /// *click* on a breadcrumb segment.
+    /// navigates to `anchor` itself, then every **sibling** directory (i.e. child
+    /// of `anchor`'s parent) is listed for a lateral switch, like GNOME Files'
+    /// path bar. Called for a *click* on a breadcrumb segment.
     pub(crate) fn deploy_breadcrumb_menu(
         &mut self,
         anchor: PathBuf,
@@ -394,24 +394,42 @@ impl FileManagerPanel {
     ) {
         let panel = cx.weak_entity();
         let fs = self.fs.clone();
+        let show_hidden = self.show_hidden;
+        // The directories that share `anchor`'s parent. The root has no
+        // siblings, so its own children are listed instead.
+        let siblings_parent = anchor
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| anchor.clone());
+
         self._operation_task = Some(cx.spawn_in(window, async move |this, cx| {
-            let mut dirs = read_entries(fs, anchor.clone(), true, SortMode::default())
-                .await
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|entry| entry.is_dir)
-                .collect::<Vec<_>>();
+            let mut dirs = read_entries(
+                fs,
+                siblings_parent.clone(),
+                show_hidden,
+                SortMode::default(),
+            )
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|entry| entry.is_dir && entry.path != anchor)
+            .collect::<Vec<_>>();
             dirs.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
 
             this.update_in(cx, |this, window, cx| {
-                if this.current_dir.as_deref() != Some(anchor.as_path()) {
-                    // Navigated elsewhere while loading; skip the menu.
+                // Skip the menu when the user navigated away from `anchor`
+                // while the listing was loading. `anchor` is usually an
+                // *ancestor* of the current directory, so the check must be
+                // "still inside it", not equality — equality is what made only
+                // the last crumb open its menu.
+                let still_inside = this
+                    .current_dir
+                    .as_deref()
+                    .is_some_and(|current| current.starts_with(&anchor));
+                if !still_inside {
                     return;
                 }
-                let siblings_parent = anchor
-                    .parent()
-                    .map(Path::to_path_buf)
-                    .unwrap_or_else(|| anchor.clone());
+
                 let focus = this.focus_handle.clone();
                 let menu = ui::ContextMenu::build(window, cx, |menu, _, _| {
                     let mut menu = menu
@@ -429,8 +447,10 @@ impl FileManagerPanel {
                         })
                         .separator();
                     for dir in dirs {
-                        let target = siblings_parent
-                            .join(dir.path.file_name().expect("read_dir yields file names"));
+                        // `dir.path` is already `<siblings_parent>/<name>`;
+                        // using the name alone joined to the parent is the
+                        // same path, but this keeps it exact.
+                        let target = dir.path.clone();
                         menu = menu.entry(dir.name.clone(), None, {
                             let panel = panel.clone();
                             move |window, cx| {

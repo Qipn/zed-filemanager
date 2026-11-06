@@ -91,7 +91,7 @@ impl FileManagerPanel {
     }
 
     /// The width used for the breakpoints, defaulting to a wide panel.
-    fn breakpoint_width(&self) -> f32 {
+    pub(crate) fn breakpoint_width(&self) -> f32 {
         self.content_width.unwrap_or(1200.)
     }
 

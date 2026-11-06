@@ -156,6 +156,48 @@ async fn test_cancel_and_confirm_the_location_entry(cx: &mut TestAppContext) {
     });
 }
 
+/// Breadcrumb targets must be the exact ancestor paths, and the sibling menu
+/// must read the *parent* of the clicked crumb (the earlier bug read the
+/// crumb's own children and joined them to the parent, so every jump landed on
+/// a non-existent path).
+#[gpui::test]
+async fn test_breadcrumb_targets_are_exact_ancestors(cx: &mut TestAppContext) {
+    init_globals(cx);
+
+    let fs = fs::FakeFs::new(cx.background_executor.clone());
+    let project = Project::test(fs.clone(), ["/".as_ref()], cx).await;
+
+    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        FileManagerPanel::new(workspace, window, cx)
+    });
+
+    let targets = panel.update(cx, |panel, _cx| {
+        panel.current_dir = Some(std::path::PathBuf::from("/home/alice/projects"));
+        panel.breadcrumb_targets()
+    });
+
+    let paths: Vec<std::path::PathBuf> = targets.iter().map(|(path, _)| path.clone()).collect();
+    assert_eq!(
+        paths,
+        vec![
+            std::path::PathBuf::from("/"),
+            std::path::PathBuf::from("/home"),
+            std::path::PathBuf::from("/home/alice"),
+            std::path::PathBuf::from("/home/alice/projects"),
+        ]
+    );
+    // Every segment is inside the previous one, so a click always navigates.
+    for pair in paths.windows(2) {
+        assert!(
+            pair[1].starts_with(&pair[0]),
+            "{} inside {}",
+            pair[1].display(),
+            pair[0].display()
+        );
+    }
+}
+
 /// The icon grid view and the details pane render as well.
 #[gpui::test]
 async fn test_render_grid_and_details_pane(cx: &mut TestAppContext) {
