@@ -26,6 +26,17 @@ impl Render for SidebarResizeDrag {
     }
 }
 
+/// The drag payload of the sidebar's internal splitter, between the places
+/// list and the folder tree.
+#[derive(Clone)]
+pub(crate) struct SidebarSplitDrag;
+
+impl Render for SidebarSplitDrag {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        gpui::Empty
+    }
+}
+
 /// Small floating view shown while dragging entries.
 pub(crate) struct DragGhost {
     pub(crate) labels: Vec<SharedString>,

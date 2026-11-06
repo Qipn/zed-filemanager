@@ -13,29 +13,111 @@ use crate::ui::ox_theme::{metrics, palette};
 use crate::ui::panel::FileManagerPanel;
 use crate::ui::places::PlaceSection;
 
-/// Renders the sidebar: places list on top, folder tree below.
+/// Renders the sidebar: places list on top, folder tree below, split by a
+/// draggable divider.
+///
+/// The split is proportional, like OpenXplorer's vertical `GtkPaned`: the two
+/// panes get `sidebar_split` and `1 - sidebar_split` of the height, so the
+/// divider behaves the same when the panel is resized.
 pub(crate) fn render_sidebar(
     this: &mut FileManagerPanel,
     window: &mut Window,
     cx: &mut Context<FileManagerPanel>,
 ) -> AnyElement {
     let palette = palette(cx.theme());
+    let split = this.sidebar_split.clamp(0.12, 0.88);
 
     v_flex()
         .id("file-manager-sidebar")
         .w(px(this.effective_sidebar_width()))
         .h_full()
+        .min_h(px(0.))
         .flex_shrink_0()
         .bg(palette.sidebar)
         .border_r_1()
         .border_color(palette.divider)
-        .child(render_places(this, cx))
+        // The splitter computes the ratio from the pointer position against
+        // the sidebar's own bounds; GPUI owns the drag, so releasing the mouse
+        // always ends it (same pattern as the width resizer).
+        .on_drag_move::<crate::ui::drag::SidebarSplitDrag>(cx.listener(
+            |this, event: &gpui::DragMoveEvent<crate::ui::drag::SidebarSplitDrag>, _, cx| {
+                let height = f32::from(event.bounds.size.height);
+                if height <= 0. {
+                    return;
+                }
+                let y = f32::from(event.event.position.y - event.bounds.top());
+                this.set_sidebar_split(y / height, cx);
+            },
+        ))
         .child(
-            // A hairline between the places list and the tree, using the same
-            // colour as Zed's `ui::Divider`.
-            div().h(px(1.)).w_full().bg(palette.divider),
+            v_flex()
+                .id("file-manager-places-pane")
+                .w_full()
+                .flex_grow(split)
+                .flex_basis(px(0.))
+                .min_h(px(0.))
+                .overflow_hidden()
+                .child(render_places(this, cx)),
         )
-        .child(render_tree(this, window, cx))
+        .child(render_splitter(this, split, cx))
+        .child(
+            v_flex()
+                .id("file-manager-tree-pane")
+                .w_full()
+                .flex_grow(1. - split)
+                .flex_basis(px(0.))
+                .min_h(px(0.))
+                .overflow_hidden()
+                .child(render_tree(this, window, cx)),
+        )
+        .into_any_element()
+}
+
+/// The divider between the places list and the folder tree.
+fn render_splitter(
+    this: &FileManagerPanel,
+    split: f32,
+    cx: &mut Context<FileManagerPanel>,
+) -> AnyElement {
+    let palette = palette(cx.theme());
+    let _ = (this, split);
+
+    div()
+        .id("file-manager-sidebar-splitter")
+        .w_full()
+        .h(px(7.))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .cursor(gpui::CursorStyle::ResizeUpDown)
+        .on_drag(crate::ui::drag::SidebarSplitDrag, |_, _, _, cx| {
+            cx.stop_propagation();
+            cx.new(|_| crate::ui::drag::SidebarSplitDrag)
+        })
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|_, _: &MouseDownEvent, _, cx| {
+                cx.stop_propagation();
+            }),
+        )
+        // Double click restores the even split.
+        .on_mouse_up(
+            MouseButton::Left,
+            cx.listener(|this, event: &gpui::MouseUpEvent, _, cx| {
+                if event.click_count == 2 {
+                    this.reset_sidebar_split(cx);
+                    cx.stop_propagation();
+                }
+            }),
+        )
+        .child(
+            div()
+                .w_full()
+                .h(px(1.))
+                .bg(palette.divider)
+                .hover(|style| style.bg(palette.accent)),
+        )
+        .occlude()
         .into_any_element()
 }
 
@@ -109,6 +191,7 @@ fn render_places(this: &FileManagerPanel, cx: &mut Context<FileManagerPanel>) ->
     div()
         .id("file-manager-sidebar-scroll")
         .flex_1()
+        .min_h(px(0.))
         .overflow_y_scroll()
         .child(list)
         .into_any_element()
@@ -214,6 +297,7 @@ fn render_tree(
     div()
         .id("file-manager-tree-scroll")
         .flex_1()
+        .min_h(px(0.))
         .overflow_y_scroll()
         .child(list)
         .into_any_element()

@@ -104,15 +104,18 @@ pub(super) fn render_body(
         .child(crate::ui::sidebar::render_sidebar(this, window, cx))
         // The resizer between the sidebar and the content. It starts a drag
         // instead of tracking the mouse itself, so GPUI ends the resize when
-        // the button is released (see Zed's dock resize handle).
+        // the button is released (see Zed's dock resize handle). The visible
+        // line is 1 px and turns accent on hover; the whole 6 px strip is the
+        // hit area.
         .child(
             div()
                 .id("file-manager-sidebar-resizer")
                 .w(px(metrics::SIDEBAR_RESIZER))
                 .h_full()
                 .flex_shrink_0()
+                .flex()
+                .justify_center()
                 .cursor(gpui::CursorStyle::ResizeLeftRight)
-                .hover(|style| style.bg(palette.drop_target))
                 .on_drag(crate::ui::panel::SidebarResizeDrag, |_, _, _, cx| {
                     cx.stop_propagation();
                     cx.new(|_| crate::ui::panel::SidebarResizeDrag)
@@ -132,6 +135,13 @@ pub(super) fn render_body(
                             cx.stop_propagation();
                         }
                     }),
+                )
+                .child(
+                    div()
+                        .w(px(1.))
+                        .h_full()
+                        .bg(palette.divider)
+                        .hover(|style| style.bg(palette.accent)),
                 )
                 .occlude(),
         )

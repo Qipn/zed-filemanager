@@ -10,6 +10,15 @@ use gpui::Context;
 use super::FileManagerPanel;
 use crate::ui::ox_theme::metrics;
 
+/// Narrowest the sidebar may be dragged to.
+const MIN_SIDEBAR_WIDTH: f32 = 120.;
+/// Room the folder view always keeps, so dragging never hides it.
+const MIN_CONTENT_WIDTH: f32 = 200.;
+/// Smallest share of the sidebar the places list may take.
+const MIN_SIDEBAR_SPLIT: f32 = 0.12;
+/// Largest share of the sidebar the places list may take.
+const MAX_SIDEBAR_SPLIT: f32 = 0.88;
+
 impl FileManagerPanel {
     /// Shows or hides the details pane.
     pub(crate) fn toggle_details_pane(&mut self, cx: &mut Context<Self>) {
@@ -23,9 +32,17 @@ impl FileManagerPanel {
         cx.notify();
     }
 
-    /// Sets the width of the sidebar, clamped to OpenXplorer's range.
+    /// Sets the width of the sidebar.
+    ///
+    /// The drag is free between a narrow minimum and a generous maximum; the
+    /// visible cap comes from [`Self::effective_sidebar_width`], which keeps a
+    /// minimum amount of room for the folder view.
     pub(crate) fn set_sidebar_width(&mut self, width: f32, cx: &mut Context<Self>) {
-        self.sidebar_width = width.clamp(140., 560.);
+        let width = width.clamp(120., 720.);
+        if (self.sidebar_width - width).abs() < 0.5 {
+            return;
+        }
+        self.sidebar_width = width;
         cx.notify();
     }
 
@@ -34,6 +51,25 @@ impl FileManagerPanel {
     /// to be cleaned up here.
     pub(crate) fn reset_sidebar_width(&mut self, cx: &mut Context<Self>) {
         self.sidebar_width = metrics::SIDEBAR_WIDTH;
+        cx.notify();
+    }
+
+    /// Sets how much of the sidebar height the places list takes (0…1).
+    ///
+    /// Called on every drag move of the sidebar's internal splitter, so it is
+    /// clamped to keep both panes usable.
+    pub(crate) fn set_sidebar_split(&mut self, ratio: f32, cx: &mut Context<Self>) {
+        let ratio = ratio.clamp(MIN_SIDEBAR_SPLIT, MAX_SIDEBAR_SPLIT);
+        if (self.sidebar_split - ratio).abs() < 0.002 {
+            return;
+        }
+        self.sidebar_split = ratio;
+        cx.notify();
+    }
+
+    /// Restores the even split between places and the folder tree.
+    pub(crate) fn reset_sidebar_split(&mut self, cx: &mut Context<Self>) {
+        self.sidebar_split = 0.5;
         cx.notify();
     }
 
@@ -70,15 +106,16 @@ impl FileManagerPanel {
         self.details_pane_visible && self.breakpoint_width() >= 900.
     }
 
-    /// The effective sidebar width: the user's width, but never more than a
-    /// third of a narrow panel.
+    /// The width the sidebar actually gets.
+    ///
+    /// The user's width wins as long as the folder view keeps at least
+    /// [`MIN_CONTENT_WIDTH`] px; only then is the sidebar shortened. This keeps
+    /// the drag feeling free instead of snapping to a fixed fraction of a
+    /// narrow dock.
     pub(crate) fn effective_sidebar_width(&self) -> f32 {
-        let width = self.breakpoint_width();
-        if width < 700. {
-            self.sidebar_width.min((width * 0.42).max(140.))
-        } else {
-            self.sidebar_width
-        }
+        let panel = self.breakpoint_width();
+        let max = (panel - MIN_CONTENT_WIDTH).max(MIN_SIDEBAR_WIDTH);
+        self.sidebar_width.min(max).max(MIN_SIDEBAR_WIDTH)
     }
 
     /// Whether the `Date modified` column fits.

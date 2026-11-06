@@ -120,6 +120,9 @@ pub struct FileManagerPanel {
     pub(crate) icon_size: usize,
     /// Width of the sidebar in pixels.
     pub(crate) sidebar_width: f32,
+    /// Share of the sidebar height given to the places list, between 0 and 1;
+    /// the folder tree gets the rest.
+    pub(crate) sidebar_split: f32,
     /// The places list of the sidebar.
     pub(crate) places: Vec<PlaceEntry>,
     /// The root of the folder tree.
@@ -188,6 +191,7 @@ impl FileManagerPanel {
             expanded_dirs: std::collections::HashMap::new(),
             icon_size: metrics::DEFAULT_ICON_SIZE,
             sidebar_width: metrics::SIDEBAR_WIDTH,
+            sidebar_split: 0.5,
             places: Vec::new(),
             tree_root: None,
             tree_nodes: Vec::new(),
