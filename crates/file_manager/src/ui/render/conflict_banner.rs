@@ -1,4 +1,8 @@
 //! The conflict prompt shown when a transfer would overwrite existing entries.
+//!
+//! Modelled on `nautilus-file-conflict-dialog.c`: the prompt names the entry that
+//! clashes, offers a suggested name to edit, and answers with replace / skip /
+//! use-this-name. One answer can be applied to every remaining conflict.
 
 use gpui::{AnyElement, Context, IntoElement};
 use theme::ActiveTheme;
@@ -15,23 +19,27 @@ pub(super) fn render_conflict_banner(
 ) -> Option<AnyElement> {
     let pending = this.pending_transfer.as_ref()?;
     let palette = palette(cx.theme());
-    let count = pending.conflicts.len();
-    let names: Vec<String> = pending
+    let total = pending.conflicts.len();
+    let position = pending.current.min(total.saturating_sub(1));
+    let existing = pending
         .conflicts
-        .iter()
-        .filter_map(|index| pending.targets.get(*index))
-        .filter_map(|target| target.file_name())
-        .map(|name| name.to_string_lossy().to_string())
-        .take(3)
-        .collect();
-    let mut summary = format!("{count} item(s) already exist");
-    if !names.is_empty() {
-        summary.push_str(": ");
-        summary.push_str(&names.join(", "));
-        if count > names.len() {
-            summary.push_str("…");
-        }
+        .get(position)
+        .and_then(|index| pending.targets.get(*index))
+        .map(|target| {
+            target
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_default()
+        })
+        .unwrap_or_default();
+
+    let mut summary = format!("“{existing}” already exists");
+    if total > 1 {
+        summary.push_str(&format!(" ({} of {total})", position + 1));
     }
+
+    let apply_to_all = this.conflict_apply_to_all;
+    let panel = cx.entity();
 
     Some(
         h_flex()
@@ -42,11 +50,29 @@ pub(super) fn render_conflict_banner(
             .py_1()
             .border_b_1()
             .border_color(palette.divider)
+            .child(Label::new(summary).single_line().size(LabelSize::Small))
+            // The suggested name, editable: typing another one and pressing
+            // `Use name` renames the incoming entry instead of touching the
+            // existing one.
             .child(
-                Label::new(summary)
-                    .single_line()
-                    .size(LabelSize::Small)
-                    .flex_1(),
+                div()
+                    .flex()
+                    .h(px(24.))
+                    .w(px(200.))
+                    .px(px(6.))
+                    .items_center()
+                    .rounded_xs()
+                    .bg(palette.field_bg)
+                    .border_1()
+                    .border_color(palette.accent)
+                    .child(this.conflict_field.clone()),
+            )
+            .child(
+                Button::new("file-manager-conflict-use-name", "Use name")
+                    .size(ButtonSize::Compact)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.resolve_current_conflict(ConflictPolicy::KeepBoth, true, window, cx);
+                    })),
             )
             .child(
                 Button::new(
@@ -55,25 +81,32 @@ pub(super) fn render_conflict_banner(
                 )
                 .size(ButtonSize::Compact)
                 .on_click(cx.listener(|this, _, window, cx| {
-                    this.resolve_conflicts(ConflictPolicy::Replace, window, cx);
+                    this.resolve_current_conflict(ConflictPolicy::Replace, false, window, cx);
                 })),
             )
             .child(
                 Button::new("file-manager-conflict-skip", ConflictPolicy::Skip.label())
                     .size(ButtonSize::Compact)
                     .on_click(cx.listener(|this, _, window, cx| {
-                        this.resolve_conflicts(ConflictPolicy::Skip, window, cx);
+                        this.resolve_current_conflict(ConflictPolicy::Skip, false, window, cx);
                     })),
             )
             .child(
                 Button::new(
-                    "file-manager-conflict-keep-both",
-                    ConflictPolicy::KeepBoth.label(),
+                    "file-manager-conflict-apply-all",
+                    if apply_to_all {
+                        "Apply to all ✓"
+                    } else {
+                        "Apply to all"
+                    },
                 )
                 .size(ButtonSize::Compact)
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.resolve_conflicts(ConflictPolicy::KeepBoth, window, cx);
-                })),
+                .on_click(move |_, _, cx| {
+                    panel.update(cx, |this, cx| {
+                        this.conflict_apply_to_all = !this.conflict_apply_to_all;
+                        cx.notify();
+                    });
+                }),
             )
             .child(
                 Button::new("file-manager-conflict-cancel", "Cancel")

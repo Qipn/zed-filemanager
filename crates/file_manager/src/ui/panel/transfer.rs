@@ -6,11 +6,13 @@
 
 use std::path::PathBuf;
 
-use gpui::{Context, Window};
+use gpui::{Context, Focusable, Window};
 use util::ResultExt;
 
-use super::{DraggedPaths, FileManagerPanel, PendingTransfer};
-use crate::model::conflict::{ConflictPolicy, apply_transfer, conflicting_indices, plan_targets};
+use super::{ConflictDecision, DraggedPaths, FileManagerPanel, PendingTransfer};
+use crate::model::conflict::{
+    ConflictPolicy, apply_transfer, conflicting_indices, plan_targets, unique_target,
+};
 use crate::model::undo::Change;
 
 impl FileManagerPanel {
@@ -82,15 +84,30 @@ impl FileManagerPanel {
             this.update_in(cx, |this, window, cx| {
                 if conflicts.is_empty() {
                     let policies = vec![ConflictPolicy::KeepBoth; targets.len()];
-                    this.execute_transfer(sources, targets, copy, from_cut, policies, window, cx);
+                    let item_count = sources.len();
+                    this.execute_transfer(
+                        sources,
+                        targets,
+                        copy,
+                        from_cut,
+                        policies,
+                        vec![None; item_count],
+                        window,
+                        cx,
+                    );
                 } else {
+                    let decisions = vec![None; conflicts.len()];
                     this.pending_transfer = Some(PendingTransfer {
                         sources,
                         targets,
                         copy,
                         conflicts,
                         from_cut,
+                        current: 0,
+                        decisions,
                     });
+                    this.conflict_apply_to_all = false;
+                    this.fill_conflict_field(window, cx);
                     cx.notify();
                 }
             })
@@ -98,34 +115,136 @@ impl FileManagerPanel {
         }));
     }
 
-    /// Applies the user's conflict resolution to the suspended transfer.
-    pub(crate) fn resolve_conflicts(
+    /// Fills the conflict prompt with a usable name for the conflict being shown
+    /// and focuses it, so the user can type a different one right away.
+    fn fill_conflict_field(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(pending) = self.pending_transfer.as_ref() else {
+            return;
+        };
+        let Some(index) = pending.conflicts.get(pending.current).copied() else {
+            return;
+        };
+        let Some(target) = pending.targets.get(index).cloned() else {
+            return;
+        };
+        // The suggestion keeps `name (1).ext` so pressing the name button is a
+        // one-click "keep both".
+        let suggestion = unique_target(&self.fs, &target);
+        let name = suggestion
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        self.conflict_field.update(cx, |field, cx| {
+            field.set_text_with_selection(&name, 0..name.len(), window, cx);
+            field.focus_handle(cx).focus(window, cx);
+        });
+    }
+
+    /// Answers the conflict being shown.
+    ///
+    /// With `use_typed_name` the name in the prompt wins over the planned target
+    /// (that is the "rename" answer); otherwise `policy` decides what happens to
+    /// the existing entry. With the apply-to-all switch on, the same answer is
+    /// given to every remaining conflict.
+    pub(crate) fn resolve_current_conflict(
         &mut self,
         policy: ConflictPolicy,
+        use_typed_name: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let Some(position) = self
+            .pending_transfer
+            .as_ref()
+            .map(|pending| pending.current)
+        else {
+            return;
+        };
+        // Read the prompt's text before taking a mutable borrow of the panel.
+        let typed = self.conflict_field.read(cx).content().trim().to_string();
+        let apply_to_all = self.conflict_apply_to_all;
+
+        let Some(pending) = self.pending_transfer.as_mut() else {
+            return;
+        };
+        if position >= pending.conflicts.len() {
+            return;
+        }
+
+        let decision_target = if use_typed_name && !typed.is_empty() {
+            pending
+                .targets
+                .get(pending.conflicts[position])
+                .and_then(|target| target.parent())
+                .map(|parent| parent.join(&typed))
+        } else {
+            None
+        };
+
+        let decision = ConflictDecision {
+            // A typed name replaces the target, so the existing entry behind the
+            // planned name is left alone.
+            policy: if decision_target.is_some() {
+                ConflictPolicy::KeepBoth
+            } else {
+                policy
+            },
+            target: decision_target,
+        };
+
+        pending.decisions[position] = Some(decision);
+        if apply_to_all {
+            for entry in pending.decisions.iter_mut().skip(position + 1) {
+                if entry.is_none() {
+                    // A typed name can only apply to the item it was typed for.
+                    *entry = Some(ConflictDecision {
+                        policy,
+                        target: None,
+                    });
+                }
+            }
+        }
+
+        let next = pending.decisions.iter().position(|entry| entry.is_none());
+        if let Some(next) = next {
+            pending.current = next;
+        }
+
+        match next {
+            Some(_) => {
+                self.fill_conflict_field(window, cx);
+                cx.notify();
+            }
+            None => self.finish_conflicts(window, cx),
+        }
+    }
+
+    /// Runs the suspended transfer with the answers collected so far.
+    fn finish_conflicts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(pending) = self.pending_transfer.take() else {
             return;
         };
-        let policies: Vec<ConflictPolicy> = pending
-            .targets
-            .iter()
-            .enumerate()
-            .map(|(index, _)| {
-                if pending.conflicts.contains(&index) {
-                    policy
-                } else {
-                    ConflictPolicy::KeepBoth
-                }
-            })
-            .collect();
+        self.conflict_apply_to_all = false;
+        let mut policies = vec![ConflictPolicy::KeepBoth; pending.targets.len()];
+        let mut chosen = vec![None; pending.targets.len()];
+        for (position, index) in pending.conflicts.iter().enumerate() {
+            let decision = pending
+                .decisions
+                .get(position)
+                .and_then(|entry| entry.as_ref());
+            if let Some(decision) = decision {
+                policies[*index] = decision.policy;
+                chosen[*index] = decision.target.clone();
+            }
+        }
         self.execute_transfer(
             pending.sources,
             pending.targets,
             pending.copy,
             pending.from_cut,
             policies,
+            chosen,
             window,
             cx,
         );
@@ -134,10 +253,12 @@ impl FileManagerPanel {
     /// Aborts the suspended transfer, leaving the filesystem untouched.
     pub(crate) fn cancel_conflicts(&mut self, cx: &mut Context<Self>) {
         self.pending_transfer = None;
+        self.conflict_apply_to_all = false;
         cx.notify();
     }
 
     /// Performs the transfer itself, applying `policies` per item.
+    #[allow(clippy::too_many_arguments)]
     fn execute_transfer(
         &mut self,
         sources: Vec<PathBuf>,
@@ -145,6 +266,7 @@ impl FileManagerPanel {
         copy: bool,
         from_cut: bool,
         policies: Vec<ConflictPolicy>,
+        chosen_targets: Vec<Option<PathBuf>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -159,7 +281,10 @@ impl FileManagerPanel {
                     .get(index)
                     .copied()
                     .unwrap_or(ConflictPolicy::KeepBoth);
-                match apply_transfer(&fs, source, target, copy, policy).await {
+                let chosen = chosen_targets
+                    .get(index)
+                    .and_then(|target| target.as_deref());
+                match apply_transfer(&fs, source, target, copy, policy, chosen).await {
                     Ok(Some((source, final_target))) => {
                         if copy {
                             changes.push(Change::Created(final_target.clone()));

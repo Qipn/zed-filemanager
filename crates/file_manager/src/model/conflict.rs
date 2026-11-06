@@ -57,6 +57,11 @@ pub(crate) fn conflicting_indices(fs: &Arc<dyn Fs>, targets: &[PathBuf]) -> Vec<
 
 /// Applies a single transfer, honouring `policy` when the target exists.
 ///
+/// `chosen_target` is the name the user typed in the conflict prompt; it replaces
+/// the planned target (and then goes through the same conflict handling as any
+/// other target, so typing a name that already exists cannot silently overwrite
+/// it).
+///
 /// Returns the pair of paths that were actually written, or `None` when the
 /// item was skipped.
 pub(crate) async fn apply_transfer(
@@ -65,8 +70,9 @@ pub(crate) async fn apply_transfer(
     target: &Path,
     copy: bool,
     policy: ConflictPolicy,
+    chosen_target: Option<&Path>,
 ) -> Result<Option<(PathBuf, PathBuf)>> {
-    let mut final_target = target.to_path_buf();
+    let mut final_target = chosen_target.unwrap_or(target).to_path_buf();
 
     if fs.path_exists(&final_target) {
         match policy {
@@ -117,7 +123,9 @@ pub(crate) async fn apply_transfer(
 }
 
 /// Finds a name close to `target` that does not exist yet, e.g. `notes (1).txt`.
-fn unique_target(fs: &Arc<dyn Fs>, target: &Path) -> PathBuf {
+///
+/// Also used to prefill the conflict prompt with a usable suggestion.
+pub(crate) fn unique_target(fs: &Arc<dyn Fs>, target: &Path) -> PathBuf {
     let directory = target.parent().unwrap_or_else(|| Path::new(""));
     let stem = target.file_stem().unwrap_or_default().to_os_string();
     let extension = target.extension().map(|ext| ext.to_os_string());

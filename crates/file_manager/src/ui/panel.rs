@@ -40,6 +40,7 @@ use workspace::{
 use crate::ToggleFocus;
 use crate::model::bookmarks::Bookmark;
 use crate::model::clipboard::Clipboard;
+use crate::model::conflict::ConflictPolicy;
 use crate::model::entries::{DirEntry, SortMode, read_entries};
 use crate::model::tree::TreeNode;
 use crate::model::undo::UndoManager;
@@ -50,6 +51,10 @@ use crate::ui::search_field::{SearchField, SearchFieldEvent};
 use crate::ui::views::ViewMode;
 
 /// A transfer waiting for the user to decide how name conflicts are resolved.
+///
+/// Each conflict is answered one at a time, so the prompt can offer a name to
+/// type instead of the suggested one (`nautilus-file-conflict-dialog.c` does the
+/// same), and an answer can be applied to every remaining conflict.
 pub(crate) struct PendingTransfer {
     /// The paths being transferred.
     pub(crate) sources: Vec<PathBuf>,
@@ -62,6 +67,19 @@ pub(crate) struct PendingTransfer {
     /// `true` when the transfer came from the clipboard's *cut* list, so the
     /// clipboard can be cleared afterwards.
     pub(crate) from_cut: bool,
+    /// The conflict the prompt is currently asking about: an index into
+    /// `conflicts`.
+    pub(crate) current: usize,
+    /// Answers already given, parallel to `conflicts`.
+    pub(crate) decisions: Vec<Option<ConflictDecision>>,
+}
+
+/// How one conflict was resolved.
+#[derive(Clone)]
+pub(crate) struct ConflictDecision {
+    pub(crate) policy: ConflictPolicy,
+    /// The name the user typed instead of the suggested one.
+    pub(crate) target: Option<PathBuf>,
 }
 
 /// A context menu deployed at the mouse position.
@@ -127,6 +145,11 @@ pub struct FileManagerPanel {
     pub(crate) drag_target: Option<PathBuf>,
     /// A transfer waiting for conflict resolution.
     pub(crate) pending_transfer: Option<PendingTransfer>,
+    /// The name offered by the conflict prompt; editable, so the user can rename
+    /// the incoming entry instead of replacing or skipping it.
+    pub(crate) conflict_field: Entity<SearchField>,
+    /// Whether the next conflict answer also applies to every remaining one.
+    pub(crate) conflict_apply_to_all: bool,
     /// Which view shows the contents of the current directory.
     pub(crate) view_mode: ViewMode,
     /// Whether the sidebar (places + folder tree) is shown.
@@ -243,6 +266,8 @@ impl FileManagerPanel {
             path_editing: false,
             drag_target: None,
             pending_transfer: None,
+            conflict_field: cx.new(|cx| SearchField::new("file-manager-conflict-input", cx)),
+            conflict_apply_to_all: false,
             view_mode: state.view_mode,
             sidebar_visible: state.sidebar_visible,
             details_pane_visible: state.details_pane_visible,

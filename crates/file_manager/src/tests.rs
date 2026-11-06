@@ -766,6 +766,67 @@ async fn test_render_grid_and_details_pane(cx: &mut TestAppContext) {
     });
 }
 
+/// A name typed in the conflict prompt renames the incoming entry and leaves the
+/// existing one alone; a typed name that also collides still gets a unique name.
+#[gpui::test]
+async fn test_conflict_typed_name(cx: &mut TestAppContext) {
+    use crate::model::conflict::{ConflictPolicy, apply_transfer};
+
+    let fake = fs::FakeFs::new(cx.background_executor.clone());
+    fake.insert_tree(
+        "/home/alice/from",
+        serde_json::json!({ "incoming.txt": "new" }),
+    )
+    .await;
+    fake.insert_tree(
+        "/home/alice/to",
+        serde_json::json!({ "notes.txt": "existing" }),
+    )
+    .await;
+    let fs: std::sync::Arc<dyn fs::Fs> = fake.clone();
+
+    // Type a free name: the existing entry must survive untouched.
+    let chosen = std::path::PathBuf::from("/home/alice/to/renamed.txt");
+    let written = apply_transfer(
+        &fs,
+        std::path::Path::new("/home/alice/from/incoming.txt"),
+        std::path::Path::new("/home/alice/to/notes.txt"),
+        true,
+        ConflictPolicy::KeepBoth,
+        Some(&chosen),
+    )
+    .await
+    .expect("transfer")
+    .expect("the item is written");
+    assert_eq!(written.1, chosen);
+    assert!(fs.path_exists(std::path::Path::new("/home/alice/to/notes.txt")));
+    assert!(fs.path_exists(&chosen));
+
+    // Type a name that already exists: it falls back to a unique name instead of
+    // overwriting silently.
+    let colliding = std::path::PathBuf::from("/home/alice/to/notes.txt");
+    let written = apply_transfer(
+        &fs,
+        std::path::Path::new("/home/alice/from/incoming.txt"),
+        std::path::Path::new("/home/alice/to/notes.txt"),
+        true,
+        ConflictPolicy::KeepBoth,
+        Some(&colliding),
+    )
+    .await
+    .expect("transfer")
+    .expect("the item is written");
+    assert_ne!(written.1, colliding);
+    assert!(
+        written
+            .1
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().contains("(1)")),
+        "got {:?}",
+        written.1
+    );
+}
+
 /// The icon grid never shows the children of a folder expanded in place.
 ///
 /// Nautilus' icon view has no expanders, so an expanded folder in the details
