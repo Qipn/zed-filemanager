@@ -12,7 +12,7 @@ use gpui::{App, Context, Entity, Focusable, PromptLevel, Window};
 use util::ResultExt;
 
 use super::FileManagerPanel;
-use crate::model::clipboard::{Clipboard, RenameState};
+use crate::model::clipboard::Clipboard;
 use crate::model::undo::{Change, HistoryStep};
 use crate::ui::search_field::SearchField;
 
@@ -314,9 +314,7 @@ impl FileManagerPanel {
     /// The details and grid views render the inline editor in place of the
     /// name when this is true.
     pub(crate) fn is_renaming(&self, path: &std::path::Path) -> bool {
-        self.rename_state
-            .as_ref()
-            .is_some_and(|state| state.source == path)
+        self.rename_state.as_deref() == Some(path)
     }
 
     /// Starts the inline rename of `path`.
@@ -347,7 +345,7 @@ impl FileManagerPanel {
             0..stem_len
         };
 
-        self.rename_state = Some(RenameState { source: path });
+        self.rename_state = Some(path);
         self.rename_field.update(cx, |field, cx| {
             field.set_text_with_selection(&name, selection, window, cx);
         });
@@ -371,7 +369,7 @@ impl FileManagerPanel {
     /// existing target are refused — and the editor stays open so the user can
     /// fix the name, instead of failing silently.
     pub(crate) fn confirm_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(source) = self.rename_state.as_ref().map(|state| state.source.clone()) else {
+        let Some(source) = self.rename_state.clone() else {
             return;
         };
         let Some(directory) = source.parent().map(|parent| parent.to_path_buf()) else {

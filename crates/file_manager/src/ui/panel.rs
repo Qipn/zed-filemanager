@@ -32,7 +32,7 @@ use workspace::{
 
 use crate::ToggleFocus;
 use crate::model::bookmarks::Bookmark;
-use crate::model::clipboard::{Clipboard, RenameState};
+use crate::model::clipboard::Clipboard;
 use crate::model::entries::{DirEntry, SortMode, read_entries};
 use crate::model::tree::TreeNode;
 use crate::model::undo::UndoManager;
@@ -92,7 +92,11 @@ pub struct FileManagerPanel {
     pub(crate) _operation_task: Option<Task<()>>,
     pub(crate) error: Option<SharedString>,
     pub(crate) clipboard: Option<Clipboard>,
-    pub(crate) rename_state: Option<RenameState>,
+    /// The entry being renamed inline, if any. The typed text lives in the
+    /// panel's [`crate::ui::search_field::SearchField`] entity, so the inline
+    /// editor gets a real caret, selection and input-method support (the rename
+    /// row renders that entity in place of the name).
+    pub(crate) rename_state: Option<PathBuf>,
     pub(crate) context_menu: Option<DeployedContextMenu>,
     pub(crate) undo_manager: UndoManager,
     pub(crate) show_hidden: bool,
@@ -269,33 +273,23 @@ impl FileManagerPanel {
             )
             .detach();
 
-            // The inline rename editor. Enter confirms, Escape cancels; the
-            // validation lives in `confirm_rename`.
-            let rename_field = panel.rename_field.clone();
-            cx.subscribe_in(
-                &rename_field,
+            // The inline rename and the location entry share the same event
+            // shape: Enter confirms, Escape cancels (Escape and Enter never
+            // reach the fields directly — see `confirm_active_input`).
+            panel.subscribe_inline_editor(
+                &panel.rename_field.clone(),
                 window,
-                |this, _field, event: &SearchFieldEvent, window, cx| match event {
-                    SearchFieldEvent::Submit => this.confirm_rename(window, cx),
-                    SearchFieldEvent::Dismiss => this.cancel_rename(window, cx),
-                    SearchFieldEvent::Change => {}
-                },
-            )
-            .detach();
-
-            // The editable location entry, with the same event shape. The text
-            // lives in the field, so `Change` needs no work here.
-            let path_field = panel.path_field.clone();
-            cx.subscribe_in(
-                &path_field,
+                cx,
+                FileManagerPanel::confirm_rename,
+                FileManagerPanel::cancel_rename,
+            );
+            panel.subscribe_inline_editor(
+                &panel.path_field.clone(),
                 window,
-                |this, _field, event: &SearchFieldEvent, window, cx| match event {
-                    SearchFieldEvent::Change => {}
-                    SearchFieldEvent::Submit => this.confirm_path_edit(window, cx),
-                    SearchFieldEvent::Dismiss => this.cancel_path_edit(window, cx),
-                },
-            )
-            .detach();
+                cx,
+                FileManagerPanel::confirm_path_edit,
+                FileManagerPanel::cancel_path_edit,
+            );
             // The sidebar needs the places list and the folder tree.
             panel.refresh_places(cx);
             panel.refresh_tree(window, cx);
@@ -348,6 +342,31 @@ impl FileManagerPanel {
         self.using_fallback_dir = false;
         self.load_directory(window, cx);
         cx.notify();
+    }
+
+    /// Subscribes an inline editor whose only event handling is "Enter confirms,
+    /// Escape cancels".
+    ///
+    /// The search entry has its own subscription because it also restarts the
+    /// search on every change.
+    fn subscribe_inline_editor(
+        &self,
+        field: &Entity<SearchField>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        on_submit: fn(&mut FileManagerPanel, &mut Window, &mut Context<FileManagerPanel>),
+        on_dismiss: fn(&mut FileManagerPanel, &mut Window, &mut Context<FileManagerPanel>),
+    ) {
+        cx.subscribe_in(
+            field,
+            window,
+            move |this, _field, event: &SearchFieldEvent, window, cx| match event {
+                SearchFieldEvent::Submit => on_submit(this, window, cx),
+                SearchFieldEvent::Dismiss => on_dismiss(this, window, cx),
+                SearchFieldEvent::Change => {}
+            },
+        )
+        .detach();
     }
 
     fn load_directory(&mut self, window: &mut Window, cx: &mut Context<Self>) {

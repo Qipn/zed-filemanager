@@ -27,12 +27,8 @@ impl Clipboard {
 ///
 /// The typed text lives in the panel's [`crate::ui::search_field::SearchField`]
 /// entity, so the inline editor gets a real caret, selection and input-method
-/// support (the rename row renders that entity in place of the name).
-#[derive(Debug)]
-pub(crate) struct RenameState {
-    /// The entry that is being renamed.
-    pub(crate) source: PathBuf,
-}
+/// support (the rename row renders that entity in place of the name). The panel
+/// keeps only the path: `FileManagerPanel::rename_state: Option<PathBuf>`.
 
 /// Copies a file, or a directory tree via `fs::copy_recursive`.
 pub(crate) async fn copy_entry(fs: &Arc<dyn Fs>, source: &Path, target: &Path) -> Result<()> {
