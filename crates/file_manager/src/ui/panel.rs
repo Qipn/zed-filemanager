@@ -127,7 +127,7 @@ pub struct FileManagerPanel {
 
 // The drag payloads live in their own module; re-exported so the views keep
 // referring to them through the panel.
-pub(crate) use crate::ui::drag::{DragGhost, DraggedPaths, SidebarResizeDrag};
+pub(crate) use crate::ui::drag::{DraggedPaths, SidebarResizeDrag};
 
 impl FileManagerPanel {
     /// Creates the panel for a workspace.
