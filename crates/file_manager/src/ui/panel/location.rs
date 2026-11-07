@@ -12,6 +12,7 @@ use gpui::{Context, DismissEvent, Focusable, Pixels, Point, SharedString, Window
 use util::ResultExt;
 
 use super::{DeployedContextMenu, FileManagerPanel};
+use crate::model::conflict::ConflictPolicy;
 use crate::model::entries::{SortMode, read_entries};
 
 impl FileManagerPanel {
@@ -60,6 +61,10 @@ impl FileManagerPanel {
             self.cancel_rename(window, cx);
         } else if self.search_query.is_some() {
             self.toggle_search(window, cx);
+        } else if self.pending_transfer.is_some() {
+            // The conflict prompt is modal: without this, Escape would fall
+            // through and do nothing while it is open.
+            self.cancel_conflicts(cx);
         }
     }
 
@@ -76,6 +81,11 @@ impl FileManagerPanel {
             self.confirm_path_edit(window, cx);
         } else if self.rename_state.is_some() {
             self.confirm_rename(window, cx);
+        } else if self.pending_transfer.is_some() {
+            // Enter answers the conflict with the name in the prompt, which is
+            // the suggested `name (1)` until the user types over it. Without this
+            // it would fall through to `open_selected` behind the modal.
+            self.resolve_current_conflict(ConflictPolicy::KeepBoth, true, window, cx);
         } else {
             self.open_selected(window, cx);
         }

@@ -17,7 +17,7 @@
 
 mod batch_rename;
 mod body;
-mod conflict_banner;
+mod conflict_modal;
 mod header;
 mod location;
 mod status_bar;
@@ -25,7 +25,7 @@ mod transfer_progress;
 
 use batch_rename::render_batch_rename;
 use body::render_body;
-use conflict_banner::render_conflict_banner;
+use conflict_modal::render_conflict_modal;
 use header::render_header_bar;
 use status_bar::render_status_bar;
 use transfer_progress::render_transfer_progress;
@@ -174,12 +174,14 @@ pub(super) fn render(
             );
         }))
         .child(render_header_bar(this, window, cx))
-        .children(render_conflict_banner(this, cx))
         .children(render_batch_rename(this, cx))
         .children(render_transfer_progress(this, cx))
         .child(render_body(this, window, cx))
         .child(render_status_bar(this, cx))
         .children(this.render_context_menu())
+        // The conflict prompt is a modal overlay, so it is rendered last (topmost)
+        // and takes no space in the column above.
+        .children(render_conflict_modal(this, cx))
         // Measure the panel itself: a Zed dock can be much narrower than the
         // window, so the layout breakpoints follow the panel's own width.
         .child({

@@ -12,6 +12,8 @@ use settings::SettingsStore;
 use workspace::Workspace;
 
 use crate::FileManagerPanel;
+use crate::model::conflict::TransferKind;
+use crate::ui::panel::PendingTransfer;
 use crate::ui::views::ViewMode;
 
 /// Sets up the globals the panel needs while it renders.
@@ -1195,5 +1197,45 @@ async fn test_open_as_workspace_targets_the_folder(cx: &mut TestAppContext) {
             Some(std::path::Path::new("/home/alice")),
             "a file selection keeps the current folder as the target"
         );
+    });
+}
+
+/// The name-conflict prompt renders as a modal overlay.
+///
+/// Regression test for "the prompt appears under the header bar and breaks the
+/// layout": it used to be an inline banner inside the panel's column, so it
+/// pushed the file list down while it was open. It is now an absolutely
+/// positioned card (Zed's modal recipe: `absolute` overlay + `elevation_3`
+/// card), so it takes no space in the layout.
+#[gpui::test]
+async fn test_conflict_prompt_renders_as_a_modal(cx: &mut TestAppContext) {
+    init_globals(cx);
+
+    let fs = fs::FakeFs::new(cx.background_executor.clone());
+    let project = Project::test(fs.clone(), ["/".as_ref()], cx).await;
+
+    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        FileManagerPanel::new(workspace, window, cx)
+    });
+
+    // A transfer parked on a conflict, exactly what the modal is drawn from.
+    panel.update(cx, |panel, cx| {
+        panel.pending_transfer = Some(PendingTransfer {
+            sources: vec!["/from/notes.txt".into()],
+            targets: vec!["/to/notes.txt".into()],
+            kind: TransferKind::Copy,
+            conflicts: vec![0],
+            from_cut: false,
+            current: 0,
+            decisions: vec![None],
+        });
+        cx.notify();
+    });
+
+    // Drawing the window paints the panel and with it the modal overlay.
+    cx.update(|_window, cx| {
+        cx.open_window(WindowOptions::default(), |_window, _cx| panel.clone())
+            .expect("failed to open the test window");
     });
 }
