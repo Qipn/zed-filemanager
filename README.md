@@ -58,6 +58,17 @@ script/build-flatpak                        # 打包成 Flatpak 并安装到本�
 - **批量重命名**：多选后右键 `Batch rename…`，模板里的 `#` 依次替换为 `1..N`；
   模板没写扩展名时保留各自原扩展名；目标已存在则报错中止而不是覆盖；整批记成一次可撤销的变更
 - 复制 / 剪切 / 粘贴（面板内剪贴板，粘贴到当前目录）
+- **与桌面剪贴板互通（Wayland）**：`Copy`/`Cut` 同时把选区发布到系统剪贴板，
+  所以可以直接粘到 GNOME Files 或其它应用；反过来，在 Nautilus 里复制的文件也能
+  粘进本面板。对齐 GNOME 的格式（`nautilus-clipboard.c`）：
+  - **复制** → `text/uri-list`（GNOME Files 及大多数工具包都识别的标准格式）
+  - **剪切** → `x-special/gnome-copied-files`（`cut` 首行 + URI，GNOME 才会执行"移动"；
+    只认 `text/uri-list` 的应用会看不到可粘贴项，比"静默变成复制"安全）
+  - **粘贴** → 先读系统剪贴板（`x-special/gnome-copied-files` 优先，其次 `text/uri-list`），
+    没有再回退到面板内部剪贴板；剪切粘贴成功后清空系统剪贴板，避免重复移动
+  - 硬链接模式（`Copy as Hard Link`）**只走内部**：系统剪贴板无法表达"硬链接"语义
+  - 依赖 `wl-clipboard`（`wl-copy`/`wl-paste`）；X11 或无此工具时自动退化为纯内部剪贴板
+    （`gpui_linux` 的剪贴板目前只支持文本/图片，`text/uri-list` 只在拖放路径里实现了）
 - **硬链接复制**：右键 `Copy as Hard Link` 把选区放进硬链接模式的剪贴板，
   下一次 `Paste` 在目标目录建立**硬链接**而不是复制数据（状态栏显示 `(linked)`）。
   - 文件夹会自动递归：先按原层级建目录（空目录也保留），再把每个文件链接过去

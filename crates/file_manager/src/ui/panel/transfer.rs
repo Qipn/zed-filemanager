@@ -357,6 +357,16 @@ impl FileManagerPanel {
                     this.undo_manager.record(changes);
                     if from_cut {
                         this.clipboard = None;
+                        // The source moved, so the desktop selection must not
+                        // offer the same paths again (GNOME Files clears its own
+                        // selection for the same reason).
+                        cx.background_executor()
+                            .spawn(async move {
+                                if let Err(error) = crate::model::system_clipboard::clear() {
+                                    log::warn!("failed to clear the system clipboard: {error:#}");
+                                }
+                            })
+                            .detach();
                     }
                     this.selected.clear();
                     this.selected.extend(written);

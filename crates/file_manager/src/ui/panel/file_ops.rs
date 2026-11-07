@@ -15,6 +15,7 @@ use util::ResultExt;
 use super::FileManagerPanel;
 use crate::model::clipboard::Clipboard;
 use crate::model::conflict::{TransferKind, filter_noop_sources};
+use crate::model::system_clipboard;
 use crate::model::undo::Change;
 use crate::ui::search_field::SearchField;
 
@@ -52,6 +53,7 @@ impl FileManagerPanel {
             .map(|entry| entry.path)
             .collect();
         if !paths.is_empty() {
+            Self::publish_to_system_clipboard(&paths, false, cx);
             self.clipboard = Some(Clipboard::Copied(paths));
             cx.notify();
         }
@@ -70,9 +72,31 @@ impl FileManagerPanel {
             .map(|entry| entry.path)
             .collect();
         if !paths.is_empty() {
+            Self::publish_to_system_clipboard(&paths, true, cx);
             self.clipboard = Some(Clipboard::Cut(paths));
             cx.notify();
         }
+    }
+
+    /// Puts `paths` on the desktop clipboard so other applications can paste
+    /// them (GNOME Files reads `text/uri-list`; a cut is published as
+    /// `x-special/gnome-copied-files` so it stays a move).
+    ///
+    /// Fire and forget: the panel's own clipboard is what its own paste uses, so
+    /// a failed publish only costs interoperability.
+    fn publish_to_system_clipboard(paths: &[PathBuf], cut: bool, cx: &mut Context<Self>) {
+        // X11 has no `wl-copy`; skip instead of spawning something that fails.
+        if std::env::var_os("WAYLAND_DISPLAY").is_none() {
+            return;
+        }
+        let paths = paths.to_vec();
+        cx.background_executor()
+            .spawn(async move {
+                if let Err(error) = system_clipboard::publish(&paths, cut) {
+                    log::warn!("failed to publish files to the system clipboard: {error:#}");
+                }
+            })
+            .detach();
     }
 
     /// Puts the selection on the clipboard in hard-link mode: pasting it creates
@@ -284,26 +308,63 @@ impl FileManagerPanel {
             return;
         }
 
-        let Some(clipboard) = self.clipboard.clone() else {
-            return;
-        };
+        let clipboard = self.clipboard.clone();
         let Some(directory) = self.current_dir.clone() else {
             return;
         };
-        // A cut clipboard moves the entries, a copied one duplicates them, and a
-        // linked one creates hard links instead of copying the bytes.
-        let kind = match &clipboard {
-            Clipboard::Copied(_) => TransferKind::Copy,
-            Clipboard::Cut(_) => TransferKind::Move,
-            Clipboard::Linked(_) => TransferKind::Link,
-        };
-        let from_cut = matches!(clipboard, Clipboard::Cut(_));
-        // Skip entries that are already where they'd go: pasting a cut entry back
-        // into its own directory must not turn it into `name (1)`.
-        let sources = filter_noop_sources(clipboard.paths().to_vec(), &directory, kind);
-        if sources.is_empty() {
+        // The conflict prompt is modal: a second paste would clobber the parked
+        // transfer and the answers collected so far.
+        if self.pending_transfer.is_some() {
             return;
         }
-        self.start_transfer(sources, directory, kind, from_cut, window, cx);
+
+        let executor = cx.background_executor().clone();
+        self._operation_task = Some(cx.spawn_in(window, async move |this, cx| {
+            // Files copied in another application (GNOME Files, another file
+            // manager) only exist on the desktop clipboard, so it wins over the
+            // panel's own copy — unless the panel holds a *hard link* clipboard,
+            // which the system format cannot express.
+            let linked = matches!(clipboard, Some(Clipboard::Linked(_)));
+            let from_system = if linked {
+                None
+            } else {
+                executor
+                    .spawn(async move { system_clipboard::read_file_list() })
+                    .await
+            };
+
+            let transfer = if let Some(list) = from_system {
+                let kind = if list.cut {
+                    TransferKind::Move
+                } else {
+                    TransferKind::Copy
+                };
+                Some((list.paths, kind, list.cut))
+            } else {
+                clipboard.map(|clipboard| {
+                    let kind = match &clipboard {
+                        Clipboard::Copied(_) => TransferKind::Copy,
+                        Clipboard::Cut(_) => TransferKind::Move,
+                        Clipboard::Linked(_) => TransferKind::Link,
+                    };
+                    let from_cut = matches!(clipboard, Clipboard::Cut(_));
+                    (clipboard.paths().to_vec(), kind, from_cut)
+                })
+            };
+
+            let Some((sources, kind, from_cut)) = transfer else {
+                return;
+            };
+            this.update_in(cx, |this, window, cx| {
+                // Skip entries that are already where they'd go: pasting a cut
+                // entry back into its own directory must not rename it.
+                let sources = filter_noop_sources(sources, &directory, kind);
+                if sources.is_empty() {
+                    return;
+                }
+                this.start_transfer(sources, directory, kind, from_cut, window, cx);
+            })
+            .ok();
+        }));
     }
 }

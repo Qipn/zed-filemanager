@@ -52,7 +52,6 @@ impl FileManagerPanel {
     ) {
         let has_selection = !self.selected.is_empty();
         let multiple_selection = self.selected.len() > 1;
-        let has_clipboard = self.clipboard.is_some();
         // Only a folder can become a workspace root (a file would silently open
         // its parent, which is not what the menu says).
         let selection_is_dir = self.selected_entry().is_some_and(|entry| entry.is_dir);
@@ -100,7 +99,9 @@ impl FileManagerPanel {
                         Box::new(CopyHardLink),
                     )
                     .action_disabled_when(!has_selection, "Cut", Box::new(Cut))
-                    .action_disabled_when(!has_clipboard, "Paste", Box::new(Paste))
+                    // Paste stays enabled: the desktop clipboard may hold files copied
+                    // in another application, and its formats cannot be inspected here.
+                    .action("Paste", Box::new(Paste))
                     .separator()
                     .action_disabled_when(!has_selection, "Move to Trash", Box::new(Trash))
                     .action_disabled_when(!has_selection, "Delete Permanently", Box::new(Delete))
@@ -129,7 +130,6 @@ impl FileManagerPanel {
             self.cancel_rename(window, cx);
         }
 
-        let has_clipboard = self.clipboard.is_some();
         let has_entries = !self.entries.is_empty()
             || self
                 .search_results
@@ -147,7 +147,9 @@ impl FileManagerPanel {
                 menu.context(focus_handle.clone())
                     .action("New Folder", Box::new(NewFolder))
                     .action("New File", Box::new(NewFile))
-                    .action_disabled_when(!has_clipboard, "Paste", Box::new(Paste))
+                    // Paste stays enabled: the desktop clipboard may hold files copied
+                    // in another application, and its formats cannot be inspected here.
+                    .action("Paste", Box::new(Paste))
                     .action_disabled_when(!has_entries, "Select All", Box::new(SelectAll))
                     .action("Refresh", Box::new(Refresh))
                     // The folder being browsed can become a workspace root, in
