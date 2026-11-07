@@ -91,6 +91,16 @@ pub(super) fn render_status_bar(
         .bg(palette.bg)
         .border_t_1()
         .border_color(palette.divider)
+        // Failures used to be recorded on `panel.error` and never shown, so a
+        // rejected paste looked like nothing happened at all.
+        .when_some(this.error.clone(), |bar, error| {
+            bar.child(
+                Label::new(error)
+                    .single_line()
+                    .size(LabelSize::XSmall)
+                    .color(Color::Custom(palette.danger)),
+            )
+        })
         .child(
             Label::new(format!("{status}{clipboard_hint}"))
                 .single_line()

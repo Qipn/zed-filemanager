@@ -12,6 +12,7 @@ use settings::SettingsStore;
 use workspace::Workspace;
 
 use crate::FileManagerPanel;
+use crate::model::clipboard::Clipboard;
 use crate::model::conflict::TransferKind;
 use crate::ui::panel::PendingTransfer;
 use crate::ui::views::ViewMode;
@@ -1238,4 +1239,49 @@ async fn test_conflict_prompt_renders_as_a_modal(cx: &mut TestAppContext) {
         cx.open_window(WindowOptions::default(), |_window, _cx| panel.clone())
             .expect("failed to open the test window");
     });
+}
+
+/// Pastes the panel clipboard into the current directory.
+#[gpui::test]
+async fn test_paste_copies_the_clipboard(cx: &mut TestAppContext) {
+    init_globals(cx);
+
+    let fs = fs::FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/home/alice",
+        serde_json::json!({ "from": { "notes.txt": "hi" }, "to": {} }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), ["/home/alice".as_ref()], cx).await;
+
+    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        FileManagerPanel::new(workspace, window, cx)
+    });
+    let window = cx
+        .update(|_window, cx| {
+            cx.open_window(WindowOptions::default(), |_window, _cx| panel.clone())
+                .expect("failed to open the test window")
+        })
+        .into();
+
+    panel.update(cx, |panel, cx| {
+        panel.current_dir = Some("/home/alice/to".into());
+        panel.clipboard = Some(Clipboard::Copied(vec![
+            "/home/alice/from/notes.txt".into()
+        ]));
+        cx.notify();
+    });
+
+    cx.update_window(window, |_, window, cx| {
+        panel.update(cx, |panel, cx| panel.paste_clipboard(window, cx));
+    })
+    .unwrap();
+    cx.background_executor.run_until_parked();
+    cx.update(|_, cx| cx.background_executor().run_until_parked());
+
+    assert!(
+        fs.path_exists(std::path::Path::new("/home/alice/to/notes.txt")),
+        "pasting a copied file writes it into the current directory"
+    );
 }

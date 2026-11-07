@@ -81,6 +81,11 @@ impl FileManagerPanel {
         if sources.is_empty() {
             return;
         }
+        // The conflict prompt is modal: without this a second paste would clobber
+        // the parked transfer and its answers.
+        if self.pending_transfer.is_some() {
+            return;
+        }
         let targets = plan_targets(&sources, &destination);
         let fs = self.fs.clone();
         self._operation_task = Some(cx.spawn_in(window, async move |this, cx| {
