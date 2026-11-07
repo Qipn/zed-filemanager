@@ -70,6 +70,9 @@ actions!(
         Rename,
         /// Copies the selected entry to the panel clipboard.
         Copy,
+        /// Puts the selected entry on the clipboard in hard-link mode: pasting
+        /// creates hard links instead of duplicating the data.
+        CopyHardLink,
         /// Cuts the selected entry to the panel clipboard.
         Cut,
         /// Pastes from the panel clipboard into the current directory.

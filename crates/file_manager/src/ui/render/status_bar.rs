@@ -76,6 +76,7 @@ pub(super) fn render_status_bar(
     let clipboard_hint = match &this.clipboard {
         Some(Clipboard::Copied(_)) => " (copied)",
         Some(Clipboard::Cut(_)) => " (cut)",
+        Some(Clipboard::Linked(_)) => " (linked)",
         None => "",
     };
 

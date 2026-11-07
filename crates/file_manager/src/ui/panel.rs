@@ -43,7 +43,7 @@ use workspace::{
 use crate::ToggleFocus;
 use crate::model::bookmarks::Bookmark;
 use crate::model::clipboard::Clipboard;
-use crate::model::conflict::ConflictPolicy;
+use crate::model::conflict::{ConflictPolicy, TransferKind};
 use crate::model::entries::{DirEntry, SortMode, read_entries};
 use crate::model::tree::TreeNode;
 use crate::model::undo::UndoManager;
@@ -63,8 +63,8 @@ pub(crate) struct PendingTransfer {
     pub(crate) sources: Vec<PathBuf>,
     /// The planned destinations, parallel to `sources`.
     pub(crate) targets: Vec<PathBuf>,
-    /// `true` copies the sources, `false` moves them.
-    pub(crate) copy: bool,
+    /// How the transfer writes its targets (move / copy / hard link).
+    pub(crate) kind: TransferKind,
     /// Indices into `sources` whose target already exists.
     pub(crate) conflicts: Vec<usize>,
     /// `true` when the transfer came from the clipboard's *cut* list, so the
@@ -99,7 +99,7 @@ pub(crate) struct TransferProgress {
     /// The entry being processed, for the status text.
     pub(crate) current: SharedString,
     /// `true` for a copy, `false` for a move.
-    pub(crate) copy: bool,
+    pub(crate) kind: TransferKind,
     /// Set by the Cancel button; the loop stops after the current entry.
     pub(crate) cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }

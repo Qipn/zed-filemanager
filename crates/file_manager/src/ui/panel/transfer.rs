@@ -11,8 +11,8 @@ use util::ResultExt;
 
 use super::{ConflictDecision, DraggedPaths, FileManagerPanel, PendingTransfer};
 use crate::model::conflict::{
-    ConflictPolicy, apply_transfer, conflicting_indices, filter_noop_sources, plan_targets,
-    unique_target,
+    ConflictPolicy, TransferKind, apply_transfer, conflicting_indices, filter_noop_sources,
+    plan_targets, unique_target,
 };
 use crate::model::undo::Change;
 
@@ -36,15 +36,19 @@ impl FileManagerPanel {
             return;
         };
         // Holding Ctrl copies the dragged entries instead of moving them.
-        let copy = window.modifiers().control;
+        let kind = if window.modifiers().control {
+            TransferKind::Copy
+        } else {
+            TransferKind::Move
+        };
         // Dropping an entry onto its own row (or into its own directory) must be a
         // no-op: the planned target is the entry itself, and answering the conflict
         // prompt with "Replace" would delete it before renaming it onto itself.
-        let sources = filter_noop_sources(dragged.0, &destination, copy);
+        let sources = filter_noop_sources(dragged.0, &destination, kind);
         if sources.is_empty() {
             return;
         }
-        self.start_transfer(sources, destination, copy, false, window, cx);
+        self.start_transfer(sources, destination, kind, false, window, cx);
     }
 
     /// External drop: copies the dragged files into `target`.
@@ -57,7 +61,7 @@ impl FileManagerPanel {
     ) {
         self.drag_target = None;
         // External files are always copied, never moved.
-        self.start_transfer(paths, target, true, false, window, cx);
+        self.start_transfer(paths, target, TransferKind::Copy, false, window, cx);
     }
 
     /// Starts a transfer of `sources` into `destination`.
@@ -69,7 +73,7 @@ impl FileManagerPanel {
         &mut self,
         sources: Vec<PathBuf>,
         destination: PathBuf,
-        copy: bool,
+        kind: TransferKind,
         from_cut: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -88,7 +92,7 @@ impl FileManagerPanel {
                     this.execute_transfer(
                         sources,
                         targets,
-                        copy,
+                        kind,
                         from_cut,
                         policies,
                         vec![None; item_count],
@@ -100,7 +104,7 @@ impl FileManagerPanel {
                     this.pending_transfer = Some(PendingTransfer {
                         sources,
                         targets,
-                        copy,
+                        kind,
                         conflicts,
                         from_cut,
                         current: 0,
@@ -241,7 +245,7 @@ impl FileManagerPanel {
         self.execute_transfer(
             pending.sources,
             pending.targets,
-            pending.copy,
+            pending.kind,
             pending.from_cut,
             policies,
             chosen,
@@ -263,7 +267,7 @@ impl FileManagerPanel {
         &mut self,
         sources: Vec<PathBuf>,
         targets: Vec<PathBuf>,
-        copy: bool,
+        kind: TransferKind,
         from_cut: bool,
         policies: Vec<ConflictPolicy>,
         chosen_targets: Vec<Option<PathBuf>>,
@@ -279,7 +283,7 @@ impl FileManagerPanel {
             total: sources.len(),
             done: 0,
             current: SharedString::default(),
-            copy,
+            kind,
             cancelled: cancelled.clone(),
         });
         cx.notify();
@@ -313,12 +317,14 @@ impl FileManagerPanel {
                 let chosen = chosen_targets
                     .get(index)
                     .and_then(|target| target.as_deref());
-                match apply_transfer(&fs, source, target, copy, policy, chosen).await {
+                match apply_transfer(&fs, source, target, kind, policy, chosen).await {
                     Ok(Some((source, final_target))) => {
-                        if copy {
-                            changes.push(Change::Created(final_target.clone()));
-                        } else {
+                        if kind == TransferKind::Move {
                             changes.push(Change::Renamed(source, final_target.clone()));
+                        } else {
+                            // Copy and hard link both leave the source in place and
+                            // create a new entry at the target.
+                            changes.push(Change::Created(final_target.clone()));
                         }
                         written.push(final_target);
                     }

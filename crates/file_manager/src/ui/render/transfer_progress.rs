@@ -4,6 +4,7 @@ use gpui::{AnyElement, Context, IntoElement, div, px};
 use theme::ActiveTheme;
 use ui::{Button, ButtonSize, Label, LabelSize, prelude::*};
 
+use crate::model::conflict::TransferKind;
 use crate::ui::ox_theme::palette;
 use crate::ui::panel::FileManagerPanel;
 
@@ -16,7 +17,11 @@ pub(super) fn render_transfer_progress(
     let palette = palette(cx.theme());
     let total = progress.total.max(1);
     let ratio = (progress.done as f32 / total as f32).clamp(0., 1.);
-    let verb = if progress.copy { "Copying" } else { "Moving" };
+    let verb = match progress.kind {
+        TransferKind::Copy => "Copying",
+        TransferKind::Link => "Linking",
+        TransferKind::Move => "Moving",
+    };
 
     let mut summary = format!("{verb} {} of {}", progress.done, progress.total);
     if !progress.current.is_empty() {

@@ -14,7 +14,7 @@ use util::ResultExt;
 
 use super::FileManagerPanel;
 use crate::model::clipboard::Clipboard;
-use crate::model::conflict::filter_noop_sources;
+use crate::model::conflict::{TransferKind, filter_noop_sources};
 use crate::model::undo::Change;
 use crate::ui::search_field::SearchField;
 
@@ -71,6 +71,23 @@ impl FileManagerPanel {
             .collect();
         if !paths.is_empty() {
             self.clipboard = Some(Clipboard::Cut(paths));
+            cx.notify();
+        }
+    }
+
+    /// Puts the selection on the clipboard in hard-link mode: pasting it creates
+    /// hard links instead of duplicating the data.
+    ///
+    /// The regular copy/cut clipboard is untouched — this only decides what a
+    /// *subsequent paste* does.
+    pub(crate) fn copy_selected_as_hard_link(&mut self, cx: &mut Context<Self>) {
+        let paths: Vec<PathBuf> = self
+            .selected_entries()
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect();
+        if !paths.is_empty() {
+            self.clipboard = Some(Clipboard::Linked(paths));
             cx.notify();
         }
     }
@@ -273,15 +290,20 @@ impl FileManagerPanel {
         let Some(directory) = self.current_dir.clone() else {
             return;
         };
-        // A cut clipboard moves the entries, a copied one duplicates them.
-        let copy = matches!(clipboard, Clipboard::Copied(_));
+        // A cut clipboard moves the entries, a copied one duplicates them, and a
+        // linked one creates hard links instead of copying the bytes.
+        let kind = match &clipboard {
+            Clipboard::Copied(_) => TransferKind::Copy,
+            Clipboard::Cut(_) => TransferKind::Move,
+            Clipboard::Linked(_) => TransferKind::Link,
+        };
         let from_cut = matches!(clipboard, Clipboard::Cut(_));
         // Skip entries that are already where they'd go: pasting a cut entry back
         // into its own directory must not turn it into `name (1)`.
-        let sources = filter_noop_sources(clipboard.paths().to_vec(), &directory, copy);
+        let sources = filter_noop_sources(clipboard.paths().to_vec(), &directory, kind);
         if sources.is_empty() {
             return;
         }
-        self.start_transfer(sources, directory, copy, from_cut, window, cx);
+        self.start_transfer(sources, directory, kind, from_cut, window, cx);
     }
 }

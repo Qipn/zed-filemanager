@@ -963,7 +963,7 @@ async fn test_search_filters(cx: &mut TestAppContext) {
 /// existing one alone; a typed name that also collides still gets a unique name.
 #[gpui::test]
 async fn test_conflict_typed_name(cx: &mut TestAppContext) {
-    use crate::model::conflict::{ConflictPolicy, apply_transfer};
+    use crate::model::conflict::{ConflictPolicy, TransferKind, apply_transfer};
 
     let fake = fs::FakeFs::new(cx.background_executor.clone());
     fake.insert_tree(
@@ -984,7 +984,7 @@ async fn test_conflict_typed_name(cx: &mut TestAppContext) {
         &fs,
         std::path::Path::new("/home/alice/from/incoming.txt"),
         std::path::Path::new("/home/alice/to/notes.txt"),
-        true,
+        TransferKind::Copy,
         ConflictPolicy::KeepBoth,
         Some(&chosen),
     )
@@ -1002,7 +1002,7 @@ async fn test_conflict_typed_name(cx: &mut TestAppContext) {
         &fs,
         std::path::Path::new("/home/alice/from/incoming.txt"),
         std::path::Path::new("/home/alice/to/notes.txt"),
-        true,
+        TransferKind::Copy,
         ConflictPolicy::KeepBoth,
         Some(&colliding),
     )

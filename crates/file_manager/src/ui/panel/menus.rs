@@ -15,8 +15,8 @@ use crate::ui::panel::columns::Column;
 use crate::ui::places::is_trash_path;
 use crate::ui::views::ViewMode;
 use crate::{
-    Copy, Cut, Delete, NewFile, NewFolder, Open, OpenAsWorkspace, OpenInThisWindow, Paste, Redo,
-    Refresh, Rename, SelectAll, ToggleBookmark, Trash, Undo,
+    Copy, CopyHardLink, Cut, Delete, NewFile, NewFolder, Open, OpenAsWorkspace, OpenInThisWindow,
+    Paste, Redo, Refresh, Rename, SelectAll, ToggleBookmark, Trash, Undo,
 };
 
 impl FileManagerPanel {
@@ -94,6 +94,11 @@ impl FileManagerPanel {
                 }
 
                 menu.action_disabled_when(!has_selection, "Copy", Box::new(Copy))
+                    .action_disabled_when(
+                        !has_selection,
+                        "Copy as Hard Link",
+                        Box::new(CopyHardLink),
+                    )
                     .action_disabled_when(!has_selection, "Cut", Box::new(Cut))
                     .action_disabled_when(!has_clipboard, "Paste", Box::new(Paste))
                     .separator()

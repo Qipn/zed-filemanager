@@ -12,7 +12,20 @@ use std::sync::Arc;
 use anyhow::Result;
 use fs::{Fs, RemoveOptions, RenameOptions};
 
-use crate::model::clipboard::copy_entry;
+use crate::model::clipboard::{copy_entry, link_entry};
+
+/// How a transfer writes its targets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TransferKind {
+    /// `rename` the source into place.
+    Move,
+    /// Duplicate the bytes (`copy_file` / `copy_recursive`).
+    Copy,
+    /// Create hard links instead of duplicating anything: no extra disk, but the
+    /// source and the new name share an inode, so writing through either updates
+    /// both.
+    Link,
+}
 
 /// What to do when the destination already contains an entry with the same
 /// name.
@@ -74,7 +87,7 @@ pub(crate) fn conflicting_indices(fs: &Arc<dyn Fs>, targets: &[PathBuf]) -> Vec<
 pub(crate) fn filter_noop_sources(
     sources: Vec<PathBuf>,
     directory: &Path,
-    copy: bool,
+    kind: TransferKind,
 ) -> Vec<PathBuf> {
     sources
         .into_iter()
@@ -82,7 +95,7 @@ pub(crate) fn filter_noop_sources(
             if directory.starts_with(source) {
                 return false;
             }
-            !(!copy && source.parent() == Some(directory))
+            !(kind == TransferKind::Move && source.parent() == Some(directory))
         })
         .collect()
 }
@@ -100,7 +113,7 @@ pub(crate) async fn apply_transfer(
     fs: &Arc<dyn Fs>,
     source: &Path,
     target: &Path,
-    copy: bool,
+    kind: TransferKind,
     policy: ConflictPolicy,
     chosen_target: Option<&Path>,
 ) -> Result<Option<(PathBuf, PathBuf)>> {
@@ -136,19 +149,21 @@ pub(crate) async fn apply_transfer(
         }
     }
 
-    if copy {
-        copy_entry(fs, source, &final_target).await?;
-    } else {
-        fs.rename(
-            source,
-            &final_target,
-            RenameOptions {
-                overwrite: false,
-                ignore_if_exists: false,
-                create_parents: false,
-            },
-        )
-        .await?;
+    match kind {
+        TransferKind::Copy => copy_entry(fs, source, &final_target).await?,
+        TransferKind::Link => link_entry(fs, source, &final_target).await?,
+        TransferKind::Move => {
+            fs.rename(
+                source,
+                &final_target,
+                RenameOptions {
+                    overwrite: false,
+                    ignore_if_exists: false,
+                    create_parents: false,
+                },
+            )
+            .await?;
+        }
     }
 
     Ok(Some((source.to_path_buf(), final_target)))
@@ -205,7 +220,7 @@ mod tests {
         // `A (1)` and `Replace` would delete it before renaming onto itself.
         let sources = paths(&["/home/alice/A"]);
         assert!(
-            filter_noop_sources(sources, Path::new("/home/alice"), false).is_empty(),
+            filter_noop_sources(sources, Path::new("/home/alice"), TransferKind::Move).is_empty(),
             "a move into the directory the entry already lives in does nothing"
         );
     }
@@ -215,15 +230,27 @@ mod tests {
         // Ctrl-drag / copy+paste in place is a real operation.
         let sources = paths(&["/home/alice/A"]);
         assert_eq!(
-            filter_noop_sources(sources, Path::new("/home/alice"), true),
+            filter_noop_sources(sources, Path::new("/home/alice"), TransferKind::Copy),
             paths(&["/home/alice/A"])
+        );
+    }
+
+    #[test]
+    fn linking_in_place_is_allowed_like_copying() {
+        let sources = paths(&["/home/alice/A"]);
+        assert_eq!(
+            filter_noop_sources(sources, Path::new("/home/alice"), TransferKind::Link),
+            paths(&["/home/alice/A"]),
+            "a hard link into the same directory produces a second name, not a rename"
         );
     }
 
     #[test]
     fn dropping_an_entry_onto_itself_is_a_noop() {
         let sources = paths(&["/home/alice/A"]);
-        assert!(filter_noop_sources(sources, Path::new("/home/alice/A"), true).is_empty());
+        assert!(
+            filter_noop_sources(sources, Path::new("/home/alice/A"), TransferKind::Copy).is_empty()
+        );
     }
 
     #[test]
@@ -233,13 +260,13 @@ mod tests {
             filter_noop_sources(
                 paths(&["/home/alice/A"]),
                 Path::new("/home/alice/A/sub"),
-                false
+                TransferKind::Move
             )
             .is_empty()
         );
         // ...but a sibling that merely shares a prefix is not "inside".
         assert_eq!(
-            filter_noop_sources(sources, Path::new("/home/alice/A (1)"), false),
+            filter_noop_sources(sources, Path::new("/home/alice/A (1)"), TransferKind::Move),
             paths(&["/home/alice/A"])
         );
     }
@@ -247,7 +274,11 @@ mod tests {
     #[test]
     fn moves_between_directories_are_kept() {
         assert_eq!(
-            filter_noop_sources(paths(&["/home/alice/A"]), Path::new("/home/alice/b"), false),
+            filter_noop_sources(
+                paths(&["/home/alice/A"]),
+                Path::new("/home/alice/b"),
+                TransferKind::Move
+            ),
             paths(&["/home/alice/A"])
         );
     }
@@ -256,7 +287,7 @@ mod tests {
     fn only_the_entries_already_in_place_are_dropped() {
         let sources = paths(&["/home/alice/A", "/tmp/B", "/home/alice/C"]);
         assert_eq!(
-            filter_noop_sources(sources, Path::new("/home/alice"), false),
+            filter_noop_sources(sources, Path::new("/home/alice"), TransferKind::Move),
             paths(&["/tmp/B"]),
             "A and C are already in /home/alice, B comes from elsewhere"
         );
